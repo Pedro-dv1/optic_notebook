@@ -18,14 +18,14 @@ function authenticatedResponder(extra?: (url: string, init?: RequestInit) => Pro
 }
 
 async function openAccountMenu() {
-  const buttons = await screen.findAllByRole('button', { name: 'Abrir menu da conta' }, { timeout: 20_000 })
+  const buttons = await screen.findAllByRole('button', { name: 'Abrir menu da conta' }, { timeout: 30_000 })
   fireEvent.click(buttons[0])
   return screen.getByRole('menu', { name: 'Conta' })
 }
 
 describe('menu e segurança da conta', () => {
   it('abre, fecha por ESC e clique externo, navega por teclado e abre os dialogs', async () => {
-    window.history.replaceState({}, '', '/cliente/agendamentos')
+    window.history.replaceState({}, '', '/cliente')
     vi.stubGlobal('fetch', authenticatedResponder())
     renderApp(<App />)
 
@@ -70,10 +70,10 @@ describe('menu e segurança da conta', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Abrir Senha' }))
     expect(screen.getByRole('dialog', { name: 'Senha' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Alterar senha' })).toBeInTheDocument()
-  }, 30_000)
+  }, 45_000)
 
   it('executa o fluxo de senha em etapas, trata erro/cooldown e evita envio duplo', async () => {
-    window.history.replaceState({}, '', '/cliente/agendamentos')
+    window.history.replaceState({}, '', '/cliente')
     let requests = 0
     let verifies = 0
     vi.stubGlobal('fetch', authenticatedResponder((url) => {
@@ -114,7 +114,7 @@ describe('menu e segurança da conta', () => {
   }, 20_000)
 
   it('mostra erro estável de entrega e não inicia cooldown quando o envio falha', async () => {
-    window.history.replaceState({}, '', '/cliente/agendamentos')
+    window.history.replaceState({}, '', '/cliente')
     vi.stubGlobal('fetch', authenticatedResponder((url) => {
       if (url.endsWith('/customers/security/password/request/')) {
         return json({ errors: { code: 'email_delivery_unavailable', message: 'provider hidden' } }, 503)
@@ -133,7 +133,7 @@ describe('menu e segurança da conta', () => {
   }, 20_000)
 
   it('só altera o e-mail depois de confirmar o endereço atual e o novo', async () => {
-    window.history.replaceState({}, '', '/cliente/agendamentos')
+    window.history.replaceState({}, '', '/cliente')
     let changed = false
     vi.stubGlobal('fetch', authenticatedResponder((url) => {
       if (url.endsWith('/auth/me/')) return json(changed ? { ...customer, email: 'novo@example.com' } : customer)

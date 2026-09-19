@@ -35,7 +35,7 @@ from customers.views import (
     PasswordOtpRequestView,
     PasswordOtpVerifyView,
 )
-from platform_core.views import CsrfCookieView, PublicPlatformConfigView, RegistrationKeyListCreateView
+from platform_core.views import CsrfCookieView, CurrentLegalDocumentsView, PublicPlatformConfigView, RegistrationKeyListCreateView
 from professionals.views import CompanyProfessionalViewSet, CompanyWorkScheduleViewSet, PublicProfessionalListView
 from services.views import CompanyServiceViewSet, PublicServiceListView
 
@@ -67,6 +67,7 @@ urlpatterns = [
     path("api/v1/company/customers/", CompanyCustomerListView.as_view(), name="company-customers"),
     path("api/v1/company/", include(company_router.urls)),
     path("api/v1/public/platform/", PublicPlatformConfigView.as_view(), name="public-platform-config"),
+    path("api/v1/legal/current/", CurrentLegalDocumentsView.as_view(), name="current-legal-documents"),
     path("api/v1/public/companies/", PublicCompanySearchView.as_view(), name="public-company-search"),
     path("api/v1/public/companies/<slug:slug>/", PublicCompanyDetailView.as_view(), name="public-company"),
     path(

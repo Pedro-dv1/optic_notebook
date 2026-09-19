@@ -1,9 +1,12 @@
 import type { IconType } from 'react-icons'
 import { LuCircleAlert as AlertCircle, LuCircleCheck as CheckCircle2, LuEye as Eye, LuEyeOff as EyeOff, LuInfo as Info, LuTriangleAlert as TriangleAlert, LuX as X } from 'react-icons/lu'
 import { useEffect, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from 'react'
+import logo from '../assets/branding/OpticNoteBook-logo.svg'
 
-export function Button({ variant = 'primary', className = '', ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'secondary' | 'danger' | 'ghost' }) {
-  return <button className={`btn btn-${variant} ${className}`} {...props} />
+export function Button({ variant = 'primary', className = '', loading = false, children, disabled, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'secondary' | 'outline' | 'ghost' | 'danger' | 'success' | 'icon'; loading?: boolean }) {
+  return <button className={`btn btn-${variant} ${className}`} disabled={disabled || loading} aria-busy={loading || undefined} {...props}>
+    {loading && <span className="button-spinner" aria-hidden="true" />}{children}
+  </button>
 }
 
 export function Field({ label, error, id, icon: Icon, hideLabel = false, className = '', ...props }: InputHTMLAttributes<HTMLInputElement> & { label: string; error?: string; icon?: IconType; hideLabel?: boolean }) {
@@ -50,12 +53,12 @@ export function TextAreaField({ label, id, ...props }: React.TextareaHTMLAttribu
   </label>
 }
 
-export function LoadingState({ label = 'Carregando' }: { label?: string }) {
-  return <div className="mx-auto min-h-40 w-full max-w-4xl p-3" role="status" aria-live="polite">
+export function LoadingState({ label = 'Carregando', fullScreen = false }: { label?: string; fullScreen?: boolean }) {
+  return <div className={`global-loading ${fullScreen ? 'global-loading-screen' : ''}`} role="status" aria-live="polite" aria-busy="true">
     <span className="sr-only">{label}</span>
-    <div className="animate-pulse overflow-hidden rounded-2xl border border-[#d8e5f4] bg-white p-5 shadow-[0_10px_35px_rgb(7_16_68_/_6%)]" aria-hidden="true">
-      <div className="flex items-center gap-4"><span className="size-12 shrink-0 rounded-full bg-[#dceafb]" /><span className="grid flex-1 gap-2"><span className="h-4 w-2/5 rounded-full bg-[#dceafb]" /><span className="h-3 w-3/5 rounded-full bg-[#edf4fc]" /></span></div>
-      <div className="mt-5 grid grid-cols-3 gap-3"><span className="h-20 rounded-xl bg-[#f0f5fb]" /><span className="h-20 rounded-xl bg-[#e7f0fa]" /><span className="h-20 rounded-xl bg-[#f0f5fb]" /></div>
+    <div className="global-loading-content" aria-hidden="true">
+      <img src={logo} alt="" className="global-loading-logo" />
+      <span className="global-loading-track"><span className="global-loading-bar" /></span>
     </div>
   </div>
 }
@@ -100,12 +103,14 @@ export function validateForm(form: HTMLFormElement) {
   return errors
 }
 
-export function Dialog({ open, title, children, onClose }: { open: boolean; title: string; children: ReactNode; onClose: () => void }) {
+export function Dialog({ open, title, children, onClose, describedBy, className = '' }: { open: boolean; title: string; children: ReactNode; onClose: () => void; describedBy?: string; className?: string }) {
   const dialogRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!open) return
     const dialog = dialogRef.current
     const previous = document.activeElement as HTMLElement | null
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
     dialog?.querySelector<HTMLElement>('button, input, select, textarea, [href]')?.focus()
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose()
@@ -117,11 +122,11 @@ export function Dialog({ open, title, children, onClose }: { open: boolean; titl
       if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
     }
     document.addEventListener('keydown', onKeyDown)
-    return () => { document.removeEventListener('keydown', onKeyDown); previous?.focus() }
+    return () => { document.removeEventListener('keydown', onKeyDown); document.body.style.overflow = previousOverflow; previous?.focus() }
   }, [open, onClose])
   if (!open) return null
   return <div className="fixed inset-0 z-50 flex items-end justify-center bg-[#071044]/35 p-0 sm:items-center sm:p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-    <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="dialog-title" className="panel max-h-[88vh] w-full max-w-md overflow-y-auto rounded-b-none shadow-xl sm:rounded-[var(--radius-lg)]">
+    <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="dialog-title" aria-describedby={describedBy} className={`panel max-h-[88vh] w-full max-w-md overflow-y-auto rounded-b-none shadow-xl sm:rounded-[var(--radius-lg)] ${className}`}>
       <div className="mb-4 flex items-start justify-between gap-4">
         <h2 id="dialog-title" className="text-lg font-semibold text-[#071044]">{title}</h2>
         <button onClick={onClose} className="btn btn-ghost -m-2 !size-11 !min-h-0 !p-0" aria-label="Fechar"><X className="size-5" /></button>

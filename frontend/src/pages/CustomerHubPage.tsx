@@ -58,7 +58,7 @@ export default function CustomerHubPage() {
 
   return <PublicPage mode="customer" className="pb-24 md:pb-0">
     <div className="relative z-10 mx-auto max-w-[76rem] px-5 pb-12 pt-5 sm:px-8 sm:pt-7 lg:px-10">
-      <PublicBackLink to="/" />
+      <PublicBackLink to="/cliente" />
       <header className="text-center">
         <h1 className="public-display text-[2.5rem] leading-[1.04] sm:text-5xl lg:text-[3.4rem]">Agende com <span>facilidade.</span></h1>
         <p className="mx-auto mt-3 max-w-3xl text-lg leading-7 text-[#7182b2]">Pesquise uma empresa para encontrar horários e agendar.</p>
@@ -83,7 +83,7 @@ export default function CustomerHubPage() {
       </section>
     </div>
     <FilterPanel open={filtersOpen} filters={draftFilters} options={companyOptions} onChange={setDraftFilters} onApply={applyFilters} onClear={clearFilters} onClose={closeFilters} />
-    <div className="fixed inset-x-0 bottom-0 z-40 border-t border-[#d3e2f4] bg-white/95 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur md:hidden"><Link to={user ? '/cliente/conta' : '/cliente/login'} className="public-primary-link w-full">{user ? 'Minha conta' : 'Entrar'}</Link></div>
+    <div className="fixed inset-x-0 bottom-0 z-40 border-t border-[#d3e2f4] bg-white/95 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur md:hidden"><Link to={user ? '/cliente' : '/cliente/login'} className="public-primary-link w-full">{user ? 'Minha conta' : 'Entrar'}</Link></div>
   </PublicPage>
 }
 
@@ -162,7 +162,7 @@ function CompanyCard({ company }: { company: CompanySearchResult }) {
   const category = [company.business_type_label, company.niche_label].filter(Boolean).join(' · ')
   return <li><article className="relative overflow-hidden rounded-2xl border border-[#d4e4f7] bg-white text-[#070d35] transition-colors hover:border-[#78b8f5]">
     <div className="absolute right-3 top-3 z-10"><CompanyObservationPopover companyName={company.name} notes={company.public_notes} /></div>
-    <Link to={`/${company.slug}`} aria-label={`Abrir ${company.name} e agendar`} className="group block">
+    <Link to={`/cliente/agendar/${company.slug}`} aria-label={`Abrir ${company.name} e agendar`} className="group block">
       {logo ? <img src={logo} alt={`Imagem de ${company.name}`} loading="lazy" className="h-40 w-full object-cover sm:h-44" /> : <span className="grid h-40 w-full place-items-center bg-[#eef5ff] text-[#7aaee8] sm:h-44"><Building2 className="size-12" aria-hidden="true" /></span>}
       <span className="flex items-end gap-4 p-5"><span className="min-w-0 flex-1"><strong className="block truncate text-lg tracking-[-.03em]">{company.name}</strong>{category && <span className="mt-1 block truncate text-sm font-medium text-[#087cf0]">{category}</span>}{company.city && <span className="mt-2 block truncate text-sm text-[#7182b2]">{company.city}{company.state ? ` - ${company.state}` : ''}</span>}{company.address && <span className="mt-2 line-clamp-2 block text-xs leading-5 text-[#7182b2]">{company.address}</span>}</span><ArrowRight className="mb-1 size-5 shrink-0 transition-transform group-hover:translate-x-1" aria-hidden="true" /></span>
     </Link>

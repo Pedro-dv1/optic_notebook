@@ -10,7 +10,12 @@ from platform_core.permissions import IsActiveCompanyAdmin, company_for_user
 from platform_core.throttles import WindowScopedRateThrottle
 
 from .models import Professional, WorkSchedule
-from .serializers import ProfessionalAdminSerializer, PublicProfessionalSerializer, WorkScheduleSerializer
+from .serializers import (
+    ProfessionalAdminSerializer,
+    PublicProfessionalQuerySerializer,
+    PublicProfessionalSerializer,
+    WorkScheduleSerializer,
+)
 
 
 class CompanyProfessionalViewSet(viewsets.ModelViewSet):
@@ -59,12 +64,14 @@ class PublicProfessionalListView(generics.ListAPIView):
     throttle_scope = "public_read"
 
     def get_queryset(self):
+        filters = PublicProfessionalQuerySerializer(data=self.request.query_params)
+        filters.is_valid(raise_exception=True)
         company = get_object_or_404(Company, slug=self.kwargs["slug"], status=Company.Status.ACTIVE)
         queryset = Professional.objects.filter(
             company=company,
             is_active=True,
         ).prefetch_related("services")
-        service_id = self.request.query_params.get("service")
+        service_id = filters.validated_data.get("service")
         if service_id:
             queryset = queryset.filter(services__id=service_id, services__is_active=True)
         return queryset.distinct()

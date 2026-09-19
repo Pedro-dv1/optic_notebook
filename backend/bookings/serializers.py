@@ -6,6 +6,7 @@ from platform_core.validators import normalize_phone
 from platform_core.turnstile import validate_public_submission
 
 from .models import Appointment
+from .messaging import appointment_whatsapp_message
 
 
 class AppointmentSerializer(serializers.ModelSerializer):
@@ -16,13 +17,15 @@ class AppointmentSerializer(serializers.ModelSerializer):
     customer_avatar = serializers.SerializerMethodField()
     can_cancel = serializers.SerializerMethodField()
     can_reschedule = serializers.SerializerMethodField()
+    whatsapp_message = serializers.SerializerMethodField()
 
     class Meta:
         model = Appointment
         fields = (
             "id", "company", "company_name", "company_slug", "service", "service_name", "professional", "professional_name",
             "starts_at", "ends_at", "customer_name", "customer_email", "customer_whatsapp",
-            "customer_notes", "customer_avatar", "status", "can_cancel", "can_reschedule", "created_at", "updated_at",
+            "customer_notes", "customer_avatar", "status", "can_cancel", "can_reschedule", "whatsapp_message",
+            "created_at", "updated_at",
         )
         read_only_fields = fields
 
@@ -42,6 +45,9 @@ class AppointmentSerializer(serializers.ModelSerializer):
             return None
         request = self.context.get("request")
         return request.build_absolute_uri(obj.customer.avatar.url) if request else obj.customer.avatar.url
+
+    def get_whatsapp_message(self, obj):
+        return appointment_whatsapp_message(obj)
 
 
 class AppointmentCreateSerializer(serializers.Serializer):

@@ -30,8 +30,9 @@ class PublicCompanyDiscoveryTests(APITestCase):
         self.clinic.state = "MG"
         self.clinic.niche = "Health"
         self.clinic.business_type = "Clinic"
+        self.clinic.city = "São José"
         self.clinic.save()
-        Service.objects.create(company=self.clinic, name="Consulta", duration=timedelta(minutes=45))
+        Service.objects.create(company=self.clinic, name="Avaliação clínica", duration=timedelta(minutes=45))
 
     def search(self, **params):
         return self.client.get("/api/v1/public/companies/", params)
@@ -41,12 +42,19 @@ class PublicCompanyDiscoveryTests(APITestCase):
             ({"search": "corte"}, self.barbershop.slug),
             ({"state": "SP", "city": "Jales"}, self.barbershop.slug),
             ({"niche": "Health", "business_type": "Clinic"}, self.clinic.slug),
-            ({"service": "consulta"}, self.clinic.slug),
+            ({"service": "avaliacao"}, self.clinic.slug),
         ):
             with self.subTest(params=params):
                 response = self.search(**params)
                 self.assertEqual(response.status_code, status.HTTP_200_OK)
                 self.assertEqual([item["slug"] for item in response.data["results"]], [expected_slug])
+
+    def test_search_ignores_accents_and_case(self):
+        for params in ({"search": "CLINICA"}, {"service": "avaliacao"}, {"city": "Sao Jose"}):
+            with self.subTest(params=params):
+                response = self.search(**params)
+                self.assertEqual(response.status_code, status.HTTP_200_OK)
+                self.assertEqual([item["slug"] for item in response.data["results"]], [self.clinic.slug])
 
     def test_orders_and_paginates_without_exposing_private_fields(self):
         ascending = self.search(ordering="name")

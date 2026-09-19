@@ -50,3 +50,61 @@ class RegistrationKey(UUIDTimestampedModel):
         if self.consumed_at:
             return "CONSUMED"
         return "ACTIVE" if self.is_active else "INACTIVE"
+
+
+class LegalAcceptance(models.Model):
+    class DocumentType(models.TextChoices):
+        TERMS = "TERMS", "Termos de Uso"
+        PRIVACY = "PRIVACY", "Política de Privacidade"
+
+    class Context(models.TextChoices):
+        CUSTOMER_REGISTER = "CUSTOMER_REGISTER", "Cadastro de cliente"
+        COMPANY_REGISTER = "COMPANY_REGISTER", "Cadastro de empresa"
+        ANONYMOUS_BOOKING = "ANONYMOUS_BOOKING", "Agendamento anônimo"
+        EXISTING_USER_REACCEPTANCE = "EXISTING_USER_REACCEPTANCE", "Novo aceite de usuário existente"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="legal_acceptances",
+    )
+    company = models.ForeignKey(
+        "companies.Company",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="legal_acceptances",
+    )
+    appointment = models.ForeignKey(
+        "bookings.Appointment",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="legal_acceptances",
+    )
+    document_type = models.CharField(max_length=16, choices=DocumentType.choices)
+    document_version = models.CharField(max_length=32)
+    context = models.CharField(max_length=40, choices=Context.choices)
+    accepted_at = models.DateTimeField(auto_now_add=True, editable=False)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(user__isnull=False) | models.Q(company__isnull=False) | models.Q(appointment__isnull=False),
+                name="legal_acceptance_has_subject",
+            ),
+            models.UniqueConstraint(
+                fields=("user", "document_type", "document_version"),
+                condition=models.Q(user__isnull=False),
+                name="unique_user_legal_version",
+            ),
+            models.UniqueConstraint(
+                fields=("appointment", "document_type", "document_version"),
+                condition=models.Q(appointment__isnull=False),
+                name="unique_booking_legal_version",
+            ),
+        ]
+        ordering = ("-accepted_at",)

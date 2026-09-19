@@ -1,8 +1,9 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
-import { Navigate, Route, Routes, useLocation } from 'react-router'
+import { Navigate, Route, Routes, useLocation, useParams } from 'react-router'
 import { AnonymousRoute, ProtectedRoute } from '../auth/RouteGuards'
 import { AppShell } from '../components/AppShell'
 import { LoadingState } from '../components/ui'
+import { VLibrasWidget } from '../components/VLibrasWidget'
 
 const HomePage = lazy(() => import('../pages/HomePage'))
 const CustomerHubPage = lazy(() => import('../pages/CustomerHubPage'))
@@ -11,6 +12,9 @@ const CustomerRegisterPage = lazy(() => import('../pages/CustomerRegisterPage'))
 const CompanyRegisterPage = lazy(() => import('../pages/CompanyRegisterPage'))
 const CustomerAccountPage = lazy(() => import('../pages/CustomerAccountPage'))
 const PublicBookingPage = lazy(() => import('../pages/PublicBookingPage'))
+const TermsPage = lazy(() => import('../pages/TermsPage'))
+const PrivacyPage = lazy(() => import('../pages/PrivacyPage'))
+const HowItWorksPage = lazy(() => import('../pages/HowItWorksPage'))
 const AdminPages = lazy(() => import('../pages/admin/AdminRoutes'))
 const PlatformPages = lazy(() => import('../pages/platform/PlatformRoutes'))
 const NotFoundPage = lazy(() => import('../pages/NotFoundPage'))
@@ -27,11 +31,16 @@ export default function App() {
 
   return <>
     <RouteTitle />
+    <VLibrasWidget />
     {!online && <div role="status" className="sticky top-0 z-[70] bg-[#8b5b18] px-4 py-2 text-center text-sm font-medium text-white">Você está offline. Algumas ações ficarão indisponíveis até a conexão voltar.</div>}
-    <Suspense fallback={<LoadingState label="Carregando" />}>
+    <Suspense fallback={<LoadingState label="Carregando" fullScreen />}>
       <Routes>
         <Route path="/" element={<HomePage />} />
-        <Route path="/cliente" element={<CustomerHubPage />} />
+        <Route path="/cliente/procurar" element={<CustomerHubPage />} />
+        <Route path="/cliente/agendar/:slug" element={<PublicBookingPage />} />
+        <Route path="/termos-de-uso" element={<TermsPage />} />
+        <Route path="/politica-de-privacidade" element={<PrivacyPage />} />
+        <Route path="/como-funciona" element={<HowItWorksPage />} />
         <Route path="/empreendedor" element={<Navigate to="/empreendedor/login" replace />} />
         <Route element={<AnonymousRoute />}>
           <Route path="/cliente/login" element={<LoginPage />} />
@@ -41,8 +50,9 @@ export default function App() {
           <Route path="/platform/login" element={<LoginPage />} />
         </Route>
         <Route element={<ProtectedRoute role="customer" />}>
-          <Route path="/cliente/agendamentos" element={<CustomerAccountPage />} />
-          <Route path="/cliente/conta" element={<Navigate to="/cliente/agendamentos" replace />} />
+          <Route path="/cliente" element={<CustomerAccountPage />} />
+          <Route path="/cliente/agendamentos" element={<Navigate to="/cliente" replace />} />
+          <Route path="/cliente/conta" element={<Navigate to="/cliente" replace />} />
         </Route>
         <Route element={<ProtectedRoute role="platform" />}>
           <Route path="/platform" element={<AppShell context="platform" />}>
@@ -64,7 +74,7 @@ export default function App() {
         </Route>
         <Route path="/login" element={<Navigate to="/cliente/login" replace />} />
         <Route path="/cadastro" element={<Navigate to="/cliente/cadastro" replace />} />
-        <Route path="/:slug" element={<PublicBookingPage />} />
+        <Route path="/:slug" element={<LegacyBookingRedirect />} />
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </Suspense>
@@ -76,7 +86,11 @@ function RouteTitle() {
   useEffect(() => {
     const titles: Record<string, string> = {
       '/': 'OpticNoteBook',
-      '/cliente': 'Buscar empresas | OpticNoteBook',
+      '/cliente': 'Meus agendamentos | OpticNoteBook',
+      '/cliente/procurar': 'Buscar empresas | OpticNoteBook',
+      '/termos-de-uso': 'Termos de Uso | OpticNoteBook',
+      '/politica-de-privacidade': 'Política de Privacidade | OpticNoteBook',
+      '/como-funciona': 'Como funciona | OpticNoteBook',
       '/cliente/login': 'Entrar | OpticNoteBook',
       '/cliente/cadastro': 'Criar conta | OpticNoteBook',
       '/cliente/agendamentos': 'Meus agendamentos | OpticNoteBook',
@@ -98,4 +112,9 @@ function RouteTitle() {
     document.title = titles[pathname] || (pathname.split('/').filter(Boolean).length === 1 ? 'Agendar | OpticNoteBook' : 'Página não encontrada | OpticNoteBook')
   }, [pathname])
   return null
+}
+
+function LegacyBookingRedirect() {
+  const { slug } = useParams()
+  return <Navigate to={`/cliente/agendar/${encodeURIComponent(slug || '')}`} replace />
 }

@@ -10,6 +10,7 @@ import { Honeypot, Turnstile } from '../components/Turnstile'
 import { Button, EmptyState, Field, LoadingState, Notice, PasswordInput, SelectField, validateForm } from '../components/ui'
 import { formatCnpj, formatPhone, formatSlug } from '../lib/inputMasks'
 import { isPublicPlatformConfig } from '../types/api'
+import { LegalAcceptanceSection, type LegalAcceptanceValue } from '../components/LegalDocuments'
 
 export default function CompanyRegisterPage() {
   const navigate = useNavigate()
@@ -29,6 +30,7 @@ export default function CompanyRegisterPage() {
   const [nicheCustom, setNicheCustom] = useState('')
   const [businessType, setBusinessType] = useState('')
   const [businessTypeCustom, setBusinessTypeCustom] = useState('')
+  const [legalAcceptance, setLegalAcceptance] = useState<LegalAcceptanceValue>({ terms: false, privacy: false })
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -62,6 +64,8 @@ export default function CompanyRegisterPage() {
         business_type_custom: businessType === 'Other' ? businessTypeCustom : '',
         website: data.get('website'),
         turnstile_token: token,
+        terms_accepted: legalAcceptance.terms,
+        privacy_accepted: legalAcceptance.privacy,
       })
       navigate('/empreendedor/login', { replace: true, state: { registered: true } })
     } catch (caught) {
@@ -108,7 +112,8 @@ export default function CompanyRegisterPage() {
           <SelectField label="Tipo de negócio" name="business_type" required value={businessType} disabled={!niche} error={fieldErrors.business_type} onChange={(event) => { setBusinessType(event.target.value); if (event.target.value !== 'Other') setBusinessTypeCustom('') }}><option value="" disabled>{niche ? 'Selecione' : 'Escolha o nicho primeiro'}</option>{businessTypes.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</SelectField>
           {niche === 'Other' && <Field label="Qual nicho?" name="niche_custom" value={nicheCustom} onChange={(event) => setNicheCustom(event.target.value)} required maxLength={100} error={fieldErrors.niche_custom} />}
           {businessType === 'Other' && <Field label="Qual tipo de negócio?" name="business_type_custom" value={businessTypeCustom} onChange={(event) => setBusinessTypeCustom(event.target.value)} required maxLength={100} error={fieldErrors.business_type_custom} />}
-          <div className="sm:col-span-2"><Turnstile action="company_registration" onToken={setToken} />{error && <div className="mt-4"><Notice kind={Object.keys(fieldErrors).length ? 'validation' : 'error'}>{error}</Notice></div>}<div className="mt-5"><Button className="w-full" disabled={busy}>{busy ? 'Cadastrando…' : 'Cadastrar empresa'}</Button></div></div>
+          <div className="sm:col-span-2"><LegalAcceptanceSection value={legalAcceptance} onChange={setLegalAcceptance} error={fieldErrors.legal_acceptance} /></div>
+          <div className="sm:col-span-2"><Turnstile action="company_registration" onToken={setToken} />{error && <div className="mt-4"><Notice kind={Object.keys(fieldErrors).length ? 'validation' : 'error'}>{error}</Notice></div>}<div className="mt-5"><Button className="w-full" disabled={busy || !legalAcceptance.terms || !legalAcceptance.privacy}>{busy ? 'Cadastrando…' : 'Cadastrar empresa'}</Button></div></div>
         </form>
       </div>
     </section>

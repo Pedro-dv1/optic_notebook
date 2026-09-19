@@ -20,6 +20,7 @@ export function AccountModalShell({ title, sidebar, backLabel, onBack, onClose, 
     const body = document.body
     const previousOverflow = body.style.overflow
     const previousPaddingRight = body.style.paddingRight
+    const returnFocus = returnFocusRef.current
     const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth
     if (scrollbarWidth > 0) body.style.paddingRight = `calc(${getComputedStyle(body).paddingRight} + ${scrollbarWidth}px)`
     body.style.overflow = 'hidden'
@@ -57,7 +58,7 @@ export function AccountModalShell({ title, sidebar, backLabel, onBack, onClose, 
       document.removeEventListener('keydown', keyDown)
       body.style.overflow = previousOverflow
       body.style.paddingRight = previousPaddingRight
-      returnFocusRef.current?.focus()
+      returnFocus?.focus()
     }
   }, [returnFocusRef])
 

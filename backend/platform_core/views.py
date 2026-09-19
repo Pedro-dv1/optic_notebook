@@ -10,7 +10,8 @@ from rest_framework.views import APIView
 
 from companies.models import BUSINESS_TYPES_BY_NICHE, Company
 
-from .models import RegistrationKey
+from .legal import current_acceptance_types, current_legal_versions
+from .models import LegalAcceptance, RegistrationKey
 from .permissions import IsSuperuser
 from .serializers import RegistrationKeyCreateSerializer, RegistrationKeySerializer
 
@@ -44,6 +45,26 @@ class PublicPlatformConfigView(APIView):
                     "business_types_by_niche": {
                         niche: list(business_types) for niche, business_types in BUSINESS_TYPES_BY_NICHE.items()
                     },
+                },
+            }
+        )
+
+
+class CurrentLegalDocumentsView(APIView):
+    permission_classes = (AllowAny,)
+
+    def get(self, request):
+        versions = current_legal_versions()
+        accepted = {document_type for document_type, _ in current_acceptance_types(request.user)}
+        return Response(
+            {
+                "terms": {
+                    "version": versions[LegalAcceptance.DocumentType.TERMS],
+                    "accepted": LegalAcceptance.DocumentType.TERMS in accepted,
+                },
+                "privacy": {
+                    "version": versions[LegalAcceptance.DocumentType.PRIVACY],
+                    "accepted": LegalAcceptance.DocumentType.PRIVACY in accepted,
                 },
             }
         )

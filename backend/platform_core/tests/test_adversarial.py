@@ -97,6 +97,8 @@ class InputAuthenticationCredentialAttackRoundTests(APITestCase):
             "state": "SP",
             "niche": "Health",
             "business_type": "Clinic",
+            "terms_accepted": True,
+            "privacy_accepted": True,
         }
 
     def test_key_replay_and_duplicate_consumption_preserve_state(self):
@@ -197,3 +199,25 @@ class InputAuthenticationCredentialAttackRoundTests(APITestCase):
         ]
         self.assertEqual(responses[:5], [status.HTTP_401_UNAUTHORIZED] * 5)
         self.assertEqual(responses[5], status.HTTP_429_TOO_MANY_REQUESTS)
+
+    def test_public_queries_reject_injection_shaped_ids_and_oversized_search(self):
+        invalid_professional_filter = self.client.get(
+            f"/api/v1/public/companies/{self.company.slug}/professionals/",
+            {"service": "' OR 1=1 --"},
+        )
+        self.assertEqual(invalid_professional_filter.status_code, status.HTTP_400_BAD_REQUEST)
+        oversized = self.client.get("/api/v1/public/companies/", {"search": "x" * 151})
+        self.assertEqual(oversized.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_public_booking_rate_limit_returns_429(self):
+        cache.clear()
+        endpoint = f"/api/v1/public/companies/{self.company.slug}/appointments/"
+        statuses = [
+            self.client.post(
+                endpoint,
+                booking_payload(self.service, self.professional, self.starts_at),
+                format="json",
+            ).status_code
+            for _ in range(11)
+        ]
+        self.assertEqual(statuses[-1], status.HTTP_429_TOO_MANY_REQUESTS)

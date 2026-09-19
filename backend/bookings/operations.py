@@ -58,9 +58,9 @@ def _validate_slot(company, service, professional, starts_at, exclude_appointmen
     local_start = timezone.localtime(starts_at)
     schedule_start = timezone.make_aware(datetime.combine(local_start.date(), schedule.starts_at))
     elapsed = (local_start - schedule_start).total_seconds()
-    interval = company.booking_settings.slot_interval.total_seconds()
+    interval = service.slot_interval.total_seconds()
     if elapsed % interval:
-        raise serializers.ValidationError("O horário não corresponde aos intervalos disponíveis da empresa.")
+        raise serializers.ValidationError("O horário não corresponde aos intervalos disponíveis do serviço.")
 
     overlaps = Appointment.objects.filter(
         professional=professional,

@@ -106,6 +106,43 @@ class PublicBookingTests(APITestCase):
         returned_starts = {item["starts_at"] for item in availability.data}
         self.assertIn(self.starts_at, returned_starts)
 
+    def test_availability_and_creation_use_service_interval_not_legacy_company_interval(self):
+        self.company.booking_settings.slot_interval = timedelta(minutes=30)
+        self.company.booking_settings.save(update_fields=("slot_interval", "updated_at"))
+        self.service.slot_interval = timedelta(minutes=10)
+        self.service.save(update_fields=("slot_interval", "updated_at"))
+        start = self.starts_at + timedelta(minutes=10)
+        date = timezone.localtime(start).date().isoformat()
+        availability = self.client.get(
+            f"/api/v1/public/companies/{self.company.slug}/availability/",
+            {"service": self.service.id, "date": date},
+        )
+        self.assertEqual(availability.status_code, status.HTTP_200_OK)
+        self.assertIn(start, {item["starts_at"] for item in availability.data})
+        created = self.client.post(
+            self.url,
+            booking_payload(self.service, self.professional, start),
+            format="json",
+        )
+        self.assertEqual(created.status_code, status.HTTP_201_CREATED)
+
+    def test_whatsapp_message_uses_tenant_template_and_safe_placeholders(self):
+        self.company.booking_settings.whatsapp_confirmed_message = (
+            "Oi {cliente}: {servico} com {profissional} em {data} às {hora} — {empresa}. {desconhecido}"
+        )
+        self.company.booking_settings.save(update_fields=("whatsapp_confirmed_message", "updated_at"))
+        created = self.client.post(
+            self.url,
+            booking_payload(self.service, self.professional, self.starts_at),
+            format="json",
+        )
+        self.client.force_authenticate(self.owner)
+        confirmed = self.client.post(f"/api/v1/company/appointments/{created.data['id']}/confirm/")
+        self.assertEqual(confirmed.status_code, status.HTTP_200_OK)
+        self.assertIn("Anonymous Customer", confirmed.data["whatsapp_message"])
+        self.assertIn(self.company.name, confirmed.data["whatsapp_message"])
+        self.assertIn("{desconhecido}", confirmed.data["whatsapp_message"])
+
     def test_management_token_cancels_and_invalid_token_does_not(self):
         created = self.client.post(
             self.url,

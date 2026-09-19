@@ -13,6 +13,10 @@ class Service(UUIDTimestampedModel):
     description = models.TextField(blank=True, max_length=2000)
     price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, validators=[MinValueValidator(0)])
     duration = models.DurationField(validators=[MinValueValidator(timedelta(minutes=5))])
+    slot_interval = models.DurationField(
+        default=timedelta(minutes=30),
+        validators=[MinValueValidator(timedelta(minutes=5))],
+    )
     is_active = models.BooleanField(default=True)
 
     class Meta:
@@ -21,6 +25,10 @@ class Service(UUIDTimestampedModel):
             models.CheckConstraint(
                 condition=Q(duration__gte=timedelta(minutes=5), duration__lte=timedelta(days=1)),
                 name="service_duration_range",
+            ),
+            models.CheckConstraint(
+                condition=Q(slot_interval__gte=timedelta(minutes=5), slot_interval__lte=timedelta(days=1)),
+                name="service_slot_interval_range",
             ),
             models.CheckConstraint(condition=Q(price__gte=0) | Q(price__isnull=True), name="service_nonnegative_price"),
         ]

@@ -25,6 +25,7 @@ function anonymousResponder(extra?: (url: string, init?: RequestInit) => Promise
     if (custom) return custom
     if (url.endsWith('/auth/csrf/')) return json(null, 204)
     if (url.endsWith('/auth/refresh/')) return json({ errors: { detail: 'Session unavailable' } }, 401)
+    if (url.endsWith('/legal/current/')) return json({ terms: { version: '2026-09-16', accepted: false }, privacy: { version: '2026-09-16', accepted: false } })
     return json({ errors: { detail: 'Not found' } }, 404)
   })
 }
@@ -38,6 +39,22 @@ describe('rotas e fluxos principais', () => {
     expect(screen.getByRole('link', { name: /sou empreendedor/i })).toBeInTheDocument()
   })
 
+  it('não mostra a seleção inicial para cliente autenticado', async () => {
+    window.history.replaceState({}, '', '/')
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/auth/csrf/')) return json(null, 204)
+      if (url.endsWith('/auth/refresh/')) return json({ access: 'restored' })
+      if (url.endsWith('/auth/me/')) return json(customer)
+      if (url.endsWith('/customers/appointments/')) return json({ count: 0, next: null, previous: null, results: [] })
+      return json({}, 404)
+    }))
+    renderApp(<App />)
+    expect(await screen.findByRole('heading', { name: /Olá, Ana/i })).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/cliente')
+    expect(screen.queryByRole('heading', { name: /como você deseja acessar/i })).not.toBeInTheDocument()
+  })
+
   it('usa a identidade correta no header e exibe o footer sem links falsos', async () => {
     vi.stubGlobal('fetch', anonymousResponder())
     renderApp(<App />)
@@ -45,7 +62,23 @@ describe('rotas e fluxos principais', () => {
     const logos = screen.getAllByRole('img', { name: 'OpticNoteBook' })
     expect(logos.filter((image) => image.getAttribute('src')?.includes('logo-text')).length).toBeGreaterThanOrEqual(2)
     expect(screen.getAllByRole('link', { name: 'Como funciona' }).length).toBeGreaterThan(0)
+    expect(screen.getByRole('link', { name: 'Termos de Uso' })).toHaveAttribute('href', '/termos-de-uso')
+    const privacyLinks = screen.getAllByRole('link', { name: 'Política de Privacidade' })
+    expect(privacyLinks.length).toBeGreaterThanOrEqual(2)
+    expect(privacyLinks.every((link) => link.getAttribute('href') === '/politica-de-privacidade')).toBe(true)
     expect(screen.getByText(/OpticNoteBook\. Todos os direitos reservados/)).toBeInTheDocument()
+  })
+
+  it.each([
+    ['/termos-de-uso', 'Termos de Uso', 'Termos de Uso | OpticNoteBook'],
+    ['/politica-de-privacidade', 'Política de Privacidade', 'Política de Privacidade | OpticNoteBook'],
+    ['/como-funciona', 'Agendar ficou mais simples.', 'Como funciona | OpticNoteBook'],
+  ])('renderiza a página pública %s com o title correto', async (route, heading, title) => {
+    window.history.replaceState({}, '', route)
+    vi.stubGlobal('fetch', anonymousResponder())
+    renderApp(<App />)
+    expect(await screen.findByRole('heading', { name: heading })).toBeInTheDocument()
+    await waitFor(() => expect(document.title).toBe(title))
   })
 
   it('abre o cadastro de empreendedor depois de verificar a sessão', async () => {
@@ -156,7 +189,7 @@ describe('rotas e fluxos principais', () => {
     valid = true
     fireEvent.change(screen.getByLabelText('Senha'), { target: { value: 'correct-password' } })
     fireEvent.click(screen.getByRole('button', { name: 'Entrar' }))
-    await waitFor(() => expect(window.location.pathname).toBe('/cliente/agendamentos'))
+    await waitFor(() => expect(window.location.pathname).toBe('/cliente'))
   })
 
   it('valida o login em português sem abrir o balão nativo', async () => {
@@ -203,16 +236,29 @@ describe('rotas e fluxos principais', () => {
     expect(await screen.findAllByRole('img', { name: 'Foto de Ana Cliente' })).toHaveLength(2)
   })
 
-  it('cliente anônimo inicia o agendamento sem login', async () => {
+  it('cliente anônimo agenda sem aceite obrigatório e vê o aviso de privacidade', async () => {
     window.history.replaceState({}, '', '/empresa-real')
     vi.stubGlobal('fetch', anonymousResponder((url) => {
       if (url.endsWith('/public/companies/empresa-real/')) return json(company)
       if (url.endsWith('/services/')) return json([{ id: 'service-1', name: 'Consulta', description: 'Avaliação', price: null, duration: '00:30:00' }])
       if (url.includes('/professionals/')) return json([{ id: 'pro-1', name: 'Marina', service_ids: ['service-1'] }])
+      if (url.includes('/availability/')) return json([{ professional: 'pro-1', professional_name: 'Marina', starts_at: '2030-01-10T10:00:00-03:00', ends_at: '2030-01-10T10:30:00-03:00' }])
     }))
     renderApp(<App />)
     fireEvent.click(await screen.findByRole('button', { name: /Consulta/ }))
-    expect(await screen.findByRole('heading', { name: /escolha o profissional/i })).toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: /Marina/ }))
+    fireEvent.change(screen.getByLabelText('Data'), { target: { value: '2030-01-10' } })
+    fireEvent.click(await screen.findByRole('button', { name: '10:00' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Continuar' }))
+    fireEvent.change(screen.getByLabelText('Nome'), { target: { value: 'Cliente sem conta' } })
+    fireEvent.change(screen.getByLabelText('E-mail'), { target: { value: 'cliente@example.com' } })
+    fireEvent.change(screen.getByLabelText('WhatsApp'), { target: { value: '+5511999999999' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Revisar agendamento' }))
+    const notice = await screen.findByText(/Ao continuar, seus dados serão coletados/i)
+    expect(notice.querySelector('a[href="/politica-de-privacidade"]')).not.toBeNull()
+    expect(notice.querySelector('a[href="/termos-de-uso"]')).not.toBeNull()
+    expect(screen.queryByText('Pendente')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Confirmar agendamento' })).toBeEnabled()
   })
 
   it('mostra 404 para slug inexistente sem capturar rotas reservadas', async () => {
@@ -224,7 +270,7 @@ describe('rotas e fluxos principais', () => {
   })
 
   it('aplica e limpa filtros somente pelas ações do painel', async () => {
-    window.history.replaceState({}, '', '/cliente')
+    window.history.replaceState({}, '', '/cliente/procurar')
     const responder = anonymousResponder((url) => {
       if (url.endsWith('/public/platform/')) return json(platformConfig)
       if (url.includes('/public/companies/?')) return json({ count: 0, next: null, previous: null, results: [] })
@@ -232,6 +278,7 @@ describe('rotas e fluxos principais', () => {
     vi.stubGlobal('fetch', responder)
     renderApp(<App />)
     await screen.findByText('Nenhuma empresa encontrada')
+    expect(screen.getByRole('link', { name: 'Voltar' })).toHaveAttribute('href', '/cliente')
     fireEvent.click(screen.getByRole('button', { name: /^Filtrar/ }))
     const dialog = screen.getByRole('dialog', { name: 'Filtros' })
     expect(dialog).toHaveClass('w-full', 'md:w-[320px]')
@@ -247,6 +294,20 @@ describe('rotas e fluxos principais', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.queryByRole('dialog', { name: 'Filtros' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Filtrar' })).toHaveFocus()
+  })
+
+  it('mostra a observação da empresa em tooltip e fecha ao tocar fora', async () => {
+    window.history.replaceState({}, '', '/cliente/procurar')
+    vi.stubGlobal('fetch', anonymousResponder((url) => {
+      if (url.endsWith('/public/platform/')) return json(platformConfig)
+      if (url.includes('/public/companies/?')) return json({ count: 1, next: null, previous: null, results: [{ ...company, public_notes: 'Atendimento com hora marcada.' }] })
+    }))
+    renderApp(<App />)
+    const trigger = await screen.findByRole('button', { name: 'Observações de Empresa Real' })
+    fireEvent.click(trigger)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Atendimento com hora marcada.')
+    fireEvent.pointerDown(document.body)
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
   })
 
   it('cliente autenticado usa dados salvos ou altera apenas o snapshot do agendamento', async () => {
@@ -371,7 +432,7 @@ describe('conteúdo não confiável', () => {
   })
 
   it('expõe estados de loading e vazio de forma acessível', async () => {
-    window.history.replaceState({}, '', '/cliente')
+    window.history.replaceState({}, '', '/cliente/procurar')
     let resolveSearch!: (value: Response) => void
     vi.stubGlobal('fetch', anonymousResponder((url) => {
       if (url.includes('/public/companies/?')) return new Promise((resolve) => { resolveSearch = resolve })

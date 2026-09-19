@@ -4,7 +4,8 @@ from django.utils import timezone
 from rest_framework import serializers
 
 from accounts.models import User
-from platform_core.models import RegistrationKey
+from platform_core.legal import record_current_acceptances, validate_legal_acceptance
+from platform_core.models import LegalAcceptance, RegistrationKey
 from platform_core.turnstile import validate_public_submission
 from platform_core.validators import normalize_phone, normalize_tax_identifier, validate_company_slug, validate_image_upload
 
@@ -171,6 +172,8 @@ class CompanyRegistrationSerializer(serializers.Serializer):
     public_notes = serializers.CharField(max_length=4000, required=False, allow_blank=True, default="")
     turnstile_token = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=2048)
     website = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=200)
+    terms_accepted = serializers.BooleanField(write_only=True, required=False, default=False)
+    privacy_accepted = serializers.BooleanField(write_only=True, required=False, default=False)
 
     def validate_owner_email(self, value):
         return User.objects.normalize_email(value).lower()
@@ -195,6 +198,7 @@ class CompanyRegistrationSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         validate_public_submission(attrs, self.context, "company_registration")
+        self.legal_document_types = validate_legal_acceptance(attrs)
         validate_business_type_for_niche(attrs)
         candidate = User(email=attrs["owner_email"], full_name=attrs["owner_name"])
         validate_password(attrs["owner_password"], candidate)
@@ -219,6 +223,12 @@ class CompanyRegistrationSerializer(serializers.Serializer):
                 owner = User.objects.create_user(**owner_data)
                 company = Company.objects.create(owner=owner, **validated_data)
                 CompanyBookingSettings.objects.create(company=company)
+                record_current_acceptances(
+                    self.legal_document_types,
+                    context=LegalAcceptance.Context.COMPANY_REGISTER,
+                    user=owner,
+                    company=company,
+                )
                 key.consumed_at = timezone.now()
                 key.consumed_by_company = company
                 key.is_active = False
@@ -231,15 +241,11 @@ class CompanyRegistrationSerializer(serializers.Serializer):
 class CompanyBookingSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = CompanyBookingSettings
-        fields = ("slot_interval", "late_tolerance", "minimum_change_notice", "updated_at")
+        fields = (
+            "late_tolerance", "minimum_change_notice", "whatsapp_waiting_message",
+            "whatsapp_confirmed_message", "whatsapp_cancelled_message", "updated_at",
+        )
         read_only_fields = ("updated_at",)
-
-    def validate_slot_interval(self, value):
-        if value.total_seconds() % 60:
-            raise serializers.ValidationError("O intervalo deve usar minutos inteiros.")
-        if value.total_seconds() > 86_400:
-            raise serializers.ValidationError("O intervalo não pode exceder um dia.")
-        return value
 
     def validate_late_tolerance(self, value):
         if value.total_seconds() > 86_400:

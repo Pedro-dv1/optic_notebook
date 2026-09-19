@@ -4,6 +4,8 @@ from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 
 from platform_core.permissions import company_for_user
+from platform_core.legal import record_current_acceptances, validate_legal_acceptance
+from platform_core.models import LegalAcceptance
 from platform_core.turnstile import validate_public_submission
 from platform_core.validators import normalize_phone, validate_image_upload
 
@@ -125,10 +127,15 @@ class CustomerRegistrationSerializer(serializers.ModelSerializer):
     whatsapp = serializers.CharField(max_length=20)
     turnstile_token = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=2048)
     website = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=200)
+    terms_accepted = serializers.BooleanField(write_only=True, required=False, default=False)
+    privacy_accepted = serializers.BooleanField(write_only=True, required=False, default=False)
 
     class Meta:
         model = User
-        fields = ("id", "email", "password", "full_name", "whatsapp", "turnstile_token", "website")
+        fields = (
+            "id", "email", "password", "full_name", "whatsapp", "turnstile_token", "website",
+            "terms_accepted", "privacy_accepted",
+        )
         read_only_fields = ("id",)
 
     def validate_email(self, value):
@@ -142,6 +149,7 @@ class CustomerRegistrationSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         validate_public_submission(attrs, self.context, "customer_registration")
+        self.legal_document_types = validate_legal_acceptance(attrs)
         candidate = User(email=attrs.get("email", ""), full_name=attrs.get("full_name", ""))
         validate_password(attrs["password"], candidate)
         return attrs
@@ -150,6 +158,12 @@ class CustomerRegistrationSerializer(serializers.ModelSerializer):
         password = validated_data.pop("password")
         try:
             with transaction.atomic():
-                return User.objects.create_user(password=password, **validated_data)
+                user = User.objects.create_user(password=password, **validated_data)
+                record_current_acceptances(
+                    self.legal_document_types,
+                    context=LegalAcceptance.Context.CUSTOMER_REGISTER,
+                    user=user,
+                )
+                return user
         except IntegrityError as exc:
             raise serializers.ValidationError("Este e-mail já está cadastrado.") from exc

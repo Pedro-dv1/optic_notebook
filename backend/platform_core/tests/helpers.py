@@ -56,6 +56,8 @@ def booking_payload(service, professional, starts_at, **overrides):
         "customer_email": "anonymous@example.com",
         "customer_whatsapp": "+5511988887777",
         "customer_notes": "Please be punctual.",
+        "terms_accepted": True,
+        "privacy_accepted": True,
     }
     payload.update(overrides)
     return payload

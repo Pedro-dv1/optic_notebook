@@ -1,0 +1,12 @@
+2-após login, n aparecer mas a pagina inicial de Como você deseja acessar.
+3-trocar o loading skeleton.
+5-botão de observação da empresa deve ser um tooltip, não popup.
+6-pesquisas devem ignorar erros do tipo: não aparece se colocar a ao invés de ã, etc.
+7-trocar a rota da pagina de procurar empresa que esta atualmente como ../cliente para ../cliente/procurar e agendamento para ../cliente 
+8-apenas (botão de voltar da pagina de procurar empresa deve voltar para área do cliente que será ../cliente).
+9-colocar botão de acessibilidade do governo e configurar o sistema para ele (Vlibras).
+10-as mensagens que o admin envia devem ser personalizadas, por exemplo: se confirmar o agendamento, o botão de contato deve levar para o whattsapp com uma mensagem configurada para quando tiver confirmado o agendamento, com o cancelamento a mesma coisa.
+11-trocar os botões que estão padrão do tailwind, estilizar eles para ficar de acordo com o design do sistema.
+12-na visão geral da pagina do admin, deve aparecer também embaixo de proxios de hoje, os dos outros dias, e aparecer todos os agendamentos que não foram confirmados nem cancelados em "Aguardando confirmação".
+13-o intervalo entre horários é definido para cada serviço, não para todos, a tolerância e prazo para cancelar pode continuar sendo global.
+14-verificar e melhorar a segurança do sistema

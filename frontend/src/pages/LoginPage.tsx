@@ -21,7 +21,7 @@ export default function LoginPage() {
   const [forgotHelp, setForgotHelp] = useState(false)
 
   if (status === 'authenticated' && user) {
-    const destination = user.is_superuser ? '/platform' : user.company ? '/admin' : '/cliente/agendamentos'
+    const destination = user.is_superuser ? '/platform' : user.company ? '/admin' : '/cliente'
     return <Navigate to={destination} replace />
   }
 
@@ -43,7 +43,7 @@ export default function LoginPage() {
         password: String(form.get('password') || ''),
         turnstile_token: token,
       })
-      const target = authenticated.is_superuser ? '/platform' : authenticated.company ? '/admin' : '/cliente/agendamentos'
+      const target = authenticated.is_superuser ? '/platform' : authenticated.company ? '/admin' : '/cliente'
       const correctContext = platform ? authenticated.is_superuser : customer ? !authenticated.is_superuser && !authenticated.company : !authenticated.is_superuser && Boolean(authenticated.company)
       if (!correctContext) {
         await logout()
@@ -83,7 +83,7 @@ export default function LoginPage() {
           <Turnstile action="login" onToken={setToken} />
           {error && <Notice kind={Object.keys(fieldErrors).length ? 'validation' : 'error'}>{error}</Notice>}
           <Button className="w-full" disabled={busy}>{busy ? 'Entrando…' : 'Entrar'}</Button>
-          {customer && <Link to="/cliente" className="btn btn-secondary w-full">Continuar sem conta</Link>}
+          {customer && <Link to="/cliente/procurar" className="btn btn-secondary w-full">Continuar sem conta</Link>}
         </form>
         {!platform && <p className="mt-7 border-t border-[#dbe6f4] pt-7 text-center text-sm text-[#7182b2]">Ainda não tem conta? <Link className="font-semibold text-[#087cf0] hover:underline" to={customer ? '/cliente/cadastro' : '/empreendedor/cadastro'}>Criar conta</Link></p>}
       </div>

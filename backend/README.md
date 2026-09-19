@@ -29,6 +29,7 @@ All routes use `/api/v1/`.
 - Company onboarding: `companies/register/`.
 - Company admin: `company/profile/`, `company/settings/`, `company/customers/`, and routers for `services/`, `professionals/`, `work-schedules/`, and `appointments/` (including `confirm/` and `cancel/`).
 - Public: `public/platform/`, paginated active-company search at `public/companies/`, `public/companies/{slug}/`, privacy-preserving view tracking at `public/companies/{slug}/view/`, `services/`, `professionals/`, `availability/`, and appointment create/cancel/reschedule routes.
+- Legal: `legal/current/` publishes the server-controlled current Terms and Privacy versions and returns only the authenticated caller's acceptance state.
 - Customer: `customers/register/`, `customers/profile/me/` (including avatar), `customers/appointments/` with cancel/reschedule actions, and the account-security routes below.
 
 ### Customer account security
@@ -55,9 +56,13 @@ The sender domain must be verified in Resend. Never expose these values through 
 
 Registration authorization keys and anonymous appointment-management tokens are returned in full only when issued. Only SHA-256 digests of the high-entropy random secrets are stored. Passwords use Django's password system with Argon2 preferred. JWT refresh tokens rotate, the previous token is blacklisted, and refresh/logout are protected by Django CSRF.
 
-Company search accepts `search` (or the compatible `q` alias), `state`, `city`, `niche`, `business_type`, `service`, `ordering=name|-name`, `page`, and `page_size`. Filtering happens in PostgreSQL and public responses omit owner and administrative data. Company views are aggregated daily; only a SHA-256 digest of the browser-generated anonymous identifier is stored, and repeated views inside a 30-minute window are ignored.
+Company search accepts `search` (or the compatible `q` alias), `state`, `city`, `niche`, `business_type`, `service`, `ordering=name|-name`, `page`, and `page_size`. Filtering happens in PostgreSQL with the `unaccent` extension, so relevant searches ignore case and accents, while public responses omit owner and administrative data. Company views are aggregated daily; only a SHA-256 digest of the browser-generated anonymous identifier is stored, and repeated views inside a 30-minute window are ignored.
+
+Each service owns its scheduling interval. Migration `services.0003` copies the former company-wide interval to every existing service before enforcing the new field. The legacy company column remains only for database compatibility and is no longer exposed or used by availability. Company booking settings also contain tenant-scoped WhatsApp templates for waiting, confirmed and cancelled appointments; unknown placeholders are preserved as plain text and blank templates fall back to safe defaults.
 
 Turnstile server validation can be required through `TURNSTILE_REQUIRED`; production fails closed if its secret is missing. Current scoped limits are login 5/minute plus identity/IP 20/hour, refresh 20/minute, company registration 3/hour, customer registration 5/10 minutes, anonymous booking 10/10 minutes, anonymous cancel/reschedule 10/10 minutes, availability 60/minute and light public reads 120/minute. Authenticated users also receive a 1000/hour general limit.
+
+Customer and company account registration require separate `terms_accepted` and `privacy_accepted` booleans. Anonymous bookings show a privacy notice but do not require document acceptance. The client never selects a document version: `platform_core/legal.py` is the source of truth, and the server records its own timestamp and current version in `LegalAcceptance` during account creation.
 
 These Django/DRF controls are application-level safeguards, not complete brute-force or denial-of-service protection. Production still requires rate limiting, request-body limits, TLS and security headers at the reverse proxy/CDN/edge. Configure a Content Security Policy for the frontend that includes the official Turnstile origins and the actual API origin.
 

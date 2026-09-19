@@ -1,6 +1,7 @@
 import { FaInstagram as Instagram } from 'react-icons/fa6'
 import { LuPhone as Phone } from 'react-icons/lu'
 import { Children, type ReactNode } from 'react'
+import { Link } from 'react-router'
 import logoWithText from '../assets/branding/OpticNoteBook-logo-text.svg'
 import opticacsLogo from '../assets/branding/opticacs-logo.png'
 
@@ -42,15 +43,15 @@ export function PublicFooter() {
           </FooterGroup>
 
           <FooterGroup title="Legal">
-            <span>Política de Privacidade</span>
-            <span>Termos de Uso</span>
+            <Link to="/politica-de-privacidade">Política de Privacidade</Link>
+            <Link to="/termos-de-uso">Termos de Uso</Link>
           </FooterGroup>
 
           <FooterGroup title="Produto">
-            <a href="/#como-funciona">Como funciona</a>
-            <a href="/cliente">Buscar empresas</a>
-            <a href="/empreendedor/login">Entrar como empreendedor</a>
-            <a href="/cliente/login">Entrar como cliente</a>
+            <Link to="/como-funciona">Como funciona</Link>
+            <Link to="/cliente/procurar">Buscar empresas</Link>
+            <Link to="/empreendedor/login">Entrar como empreendedor</Link>
+            <Link to="/cliente/login">Entrar como cliente</Link>
           </FooterGroup>
         </div>
 

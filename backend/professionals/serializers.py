@@ -39,6 +39,10 @@ class PublicProfessionalSerializer(serializers.ModelSerializer):
         return [service.id for service in obj.services.all() if service.company_id == obj.company_id and service.is_active]
 
 
+class PublicProfessionalQuerySerializer(serializers.Serializer):
+    service = serializers.UUIDField(required=False)
+
+
 class WorkScheduleSerializer(serializers.ModelSerializer):
     professional = serializers.PrimaryKeyRelatedField(queryset=Professional.objects.none())
 

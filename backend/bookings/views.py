@@ -1,18 +1,19 @@
 from datetime import datetime
 
 from django.db import transaction
-from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import generics, serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 
 from companies.models import Company
 from platform_core.permissions import IsActiveCompanyAdmin, IsCustomer, company_for_user
 from platform_core.throttles import WindowScopedRateThrottle
+from platform_core.search import accent_insensitive_query
 from professionals.models import Professional, WorkSchedule
 from services.models import Service
 
@@ -42,12 +43,18 @@ class CompanyCustomerListView(generics.ListAPIView):
     def get_queryset(self):
         queryset = Appointment.objects.filter(company=company_for_user(self.request.user)).select_related("customer")
         if query := self.request.query_params.get("q", "").strip():
-            queryset = queryset.filter(
-                Q(customer_name__icontains=query)
-                | Q(customer_email__icontains=query)
-                | Q(customer_whatsapp__icontains=query)
-            )
+            if len(query) > 150:
+                raise ValidationError({"q": "A pesquisa deve ter no máximo 150 caracteres."})
+            queryset = queryset.filter(accent_insensitive_query(
+                query, "customer_name", "customer_email", "customer_whatsapp"
+            ))
         return queryset.order_by("customer_email", "-starts_at").distinct("customer_email")
+
+
+class CompanyAppointmentPagination(PageNumberPagination):
+    page_size = 50
+    page_size_query_param = "page_size"
+    max_page_size = 200
 
 
 class AvailabilityView(generics.GenericAPIView):
@@ -87,7 +94,7 @@ class AvailabilityView(generics.GenericAPIView):
             )
 
         slots = []
-        interval = company.booking_settings.slot_interval
+        interval = service.slot_interval
         now = timezone.now()
         for schedule in schedules:
             cursor = timezone.make_aware(datetime.combine(target_date, schedule.starts_at))
@@ -127,14 +134,15 @@ class PublicAppointmentCreateView(generics.GenericAPIView):
             status=Company.Status.ACTIVE,
         )
         customer = request.user if request.user.is_authenticated else None
-        appointment, management_token = create_appointment(
-            company=company,
-            service_id=serializer.validated_data["service"],
-            professional_id=serializer.validated_data["professional"],
-            starts_at=serializer.validated_data["starts_at"],
-            customer=customer,
-            customer_data=serializer.customer_snapshot(request.user),
-        )
+        with transaction.atomic():
+            appointment, management_token = create_appointment(
+                company=company,
+                service_id=serializer.validated_data["service"],
+                professional_id=serializer.validated_data["professional"],
+                starts_at=serializer.validated_data["starts_at"],
+                customer=customer,
+                customer_data=serializer.customer_snapshot(request.user),
+            )
         data = AppointmentSerializer(appointment).data
         data["management_token"] = management_token
         return Response(data, status=status.HTTP_201_CREATED)
@@ -183,10 +191,11 @@ class PublicAppointmentRescheduleView(generics.GenericAPIView):
 class CompanyAppointmentViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = (IsActiveCompanyAdmin,)
     serializer_class = AppointmentSerializer
+    pagination_class = CompanyAppointmentPagination
 
     def get_queryset(self):
         queryset = Appointment.objects.filter(company=company_for_user(self.request.user)).select_related(
-            "company__booking_settings", "service", "professional"
+            "company__booking_settings", "service", "professional", "customer"
         )
         params = self.request.query_params
         if value := params.get("status"):
@@ -214,13 +223,12 @@ class CompanyAppointmentViewSet(viewsets.ReadOnlyModelViewSet):
                     raise ValidationError({parameter: "Use uma data no formato AAAA-MM-DD."})
                 queryset = queryset.filter(**{lookup: parsed_date})
         if query := params.get("q", "").strip():
-            queryset = queryset.filter(
-                Q(customer_name__icontains=query)
-                | Q(customer_email__icontains=query)
-                | Q(customer_whatsapp__icontains=query)
-                | Q(service__name__icontains=query)
-                | Q(professional__name__icontains=query)
-            )
+            if len(query) > 150:
+                raise ValidationError({"q": "A pesquisa deve ter no máximo 150 caracteres."})
+            queryset = queryset.filter(accent_insensitive_query(
+                query, "customer_name", "customer_email", "customer_whatsapp",
+                "service__name", "professional__name",
+            ))
         return queryset
 
     @action(detail=True, methods=("post",))

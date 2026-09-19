@@ -67,7 +67,7 @@ class TurnstileValidationTests(APITestCase):
     @patch("platform_core.turnstile.urlrequest.urlopen")
     def test_valid_token_is_verified_server_side_and_replay_is_rejected(self, mocked):
         mocked.return_value = siteverify_response({"success": True, "hostname": "testserver", "action": "customer_registration"})
-        payload = {"email": "turnstile@example.com", "password": PASSWORD, "full_name": "Turnstile", "whatsapp": "+5511988887777", "turnstile_token": "valid-once"}
+        payload = {"email": "turnstile@example.com", "password": PASSWORD, "full_name": "Turnstile", "whatsapp": "+5511988887777", "turnstile_token": "valid-once", "terms_accepted": True, "privacy_accepted": True}
         created = self.client.post("/api/v1/customers/register/", payload, format="json")
         self.assertEqual(created.status_code, status.HTTP_201_CREATED)
         replay = self.client.post("/api/v1/customers/register/", payload | {"email": "other@example.com"}, format="json")

@@ -155,6 +155,8 @@ class PlatformAndRegistrationTests(APITestCase):
             "state": "SP",
             "niche": "Beauty",
             "business_type": "Salon",
+            "terms_accepted": True,
+            "privacy_accepted": True,
         }
 
     def test_superuser_generates_key_and_secret_is_not_persisted_or_listed(self):

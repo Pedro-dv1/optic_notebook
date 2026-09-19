@@ -1,8 +1,14 @@
 import { LuArrowRight as ArrowRight, LuBriefcaseBusiness as BriefcaseBusiness, LuCalendarDays as CalendarDays, LuCircleUserRound as CircleUserRound } from 'react-icons/lu'
-import { Link } from 'react-router'
+import { Link, Navigate } from 'react-router'
+import { useAuth } from '../auth/AuthProvider'
+import { homeFor } from '../auth/RouteGuards'
 import { PublicPage } from '../components/PublicLayout'
+import { LoadingState } from '../components/ui'
 
 export default function HomePage() {
+  const { user, status } = useAuth()
+  if (status === 'loading') return <LoadingState fullScreen label="Verificando sua sessão" />
+  if (user) return <Navigate to={homeFor(user)} replace />
   return <PublicPage mode="home">
     <section id="como-funciona" className="mx-auto max-w-[80rem] px-5 pb-12 pt-9 sm:px-8 sm:pt-12 lg:px-12">
       <div className="text-center">

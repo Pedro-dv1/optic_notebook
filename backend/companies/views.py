@@ -17,6 +17,7 @@ from rest_framework.viewsets import ReadOnlyModelViewSet
 
 from platform_core.permissions import IsCompanyAdmin, IsSuperuser, company_for_user
 from platform_core.throttles import WindowScopedRateThrottle
+from platform_core.search import accent_insensitive_query, normalized_contains
 
 from bookings.models import Appointment
 
@@ -151,7 +152,11 @@ class PlatformCompanyViewSet(ReadOnlyModelViewSet):
     def get_queryset(self):
         queryset = platform_company_queryset()
         if query := self.request.query_params.get("q", "").strip():
-            queryset = queryset.filter(Q(name__icontains=query) | Q(slug__icontains=query))
+            if len(query) > 150:
+                from rest_framework.exceptions import ValidationError
+
+                raise ValidationError({"q": "A pesquisa deve ter no máximo 150 caracteres."})
+            queryset = queryset.filter(accent_insensitive_query(query, "name", "slug"))
         status_filter = self.request.query_params.get("status", "").strip().upper()
         if status_filter in Company.Status.values:
             queryset = queryset.filter(status=status_filter)
@@ -200,28 +205,26 @@ class PublicCompanySearchView(generics.ListAPIView):
         queryset = Company.objects.filter(status=Company.Status.ACTIVE)
         query = (values.get("search") or values.get("q") or "").strip()
         if query:
-            matching_niches = [value for value, label in Company.Niche.choices if query.lower() in label.lower()]
-            matching_types = [value for value, label in Company.BusinessType.choices if query.lower() in label.lower()]
+            matching_niches = [value for value, label in Company.Niche.choices if normalized_contains(query, label)]
+            matching_types = [value for value, label in Company.BusinessType.choices if normalized_contains(query, label)]
             queryset = queryset.filter(
-                Q(name__icontains=query)
-                | Q(niche_custom__icontains=query)
-                | Q(business_type_custom__icontains=query)
-                | Q(niche__icontains=query)
-                | Q(business_type__icontains=query)
+                accent_insensitive_query(
+                    query, "name", "niche_custom", "business_type_custom", "niche", "business_type",
+                )
                 | Q(niche__in=matching_niches)
                 | Q(business_type__in=matching_types)
-                | Q(services__name__icontains=query, services__is_active=True)
+                | Q(services__name__unaccent__icontains=query, services__is_active=True)
             )
         if state_filter := values.get("state"):
             queryset = queryset.filter(state=state_filter)
         if city := values.get("city", "").strip():
-            queryset = queryset.filter(city__iexact=city)
+            queryset = queryset.filter(city__unaccent__iexact=city)
         if niche := values.get("niche"):
             queryset = queryset.filter(niche=niche)
         if business_type := values.get("business_type"):
             queryset = queryset.filter(business_type=business_type)
         if service := values.get("service", "").strip():
-            queryset = queryset.filter(services__name__icontains=service, services__is_active=True)
+            queryset = queryset.filter(services__name__unaccent__icontains=service, services__is_active=True)
         return queryset.distinct().order_by(values["ordering"], "slug")
 
 

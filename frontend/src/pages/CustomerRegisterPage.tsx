@@ -7,6 +7,7 @@ import { PublicBackLink, PublicPage } from '../components/PublicLayout'
 import { Honeypot, Turnstile } from '../components/Turnstile'
 import { Button, Field, Notice, PasswordInput, validateForm } from '../components/ui'
 import { formatPhone } from '../lib/inputMasks'
+import { LegalAcceptanceSection, type LegalAcceptanceValue } from '../components/LegalDocuments'
 
 export default function CustomerRegisterPage() {
   const navigate = useNavigate()
@@ -15,6 +16,7 @@ export default function CustomerRegisterPage() {
   const [busy, setBusy] = useState(false)
   const [token, setToken] = useState('')
   const [whatsapp, setWhatsapp] = useState('')
+  const [legalAcceptance, setLegalAcceptance] = useState<LegalAcceptanceValue>({ terms: false, privacy: false })
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -36,6 +38,8 @@ export default function CustomerRegisterPage() {
         password: data.get('password'),
         website: data.get('website'),
         turnstile_token: token,
+        terms_accepted: legalAcceptance.terms,
+        privacy_accepted: legalAcceptance.privacy,
       })
       navigate('/cliente/login', { replace: true, state: { registered: true } })
     } catch (caught) {
@@ -61,8 +65,9 @@ export default function CustomerRegisterPage() {
           <Field label="E-mail" name="email" type="email" autoComplete="email" placeholder="seu@email.com" icon={Mail} required maxLength={254} error={fieldErrors.email} />
           <Field label="WhatsApp" name="whatsapp" type="tel" autoComplete="tel" inputMode="numeric" placeholder="(00) 90000-0000" icon={MessageCircle} value={whatsapp} onChange={(event) => setWhatsapp(formatPhone(event.target.value))} required maxLength={15} error={fieldErrors.whatsapp} />
           <div className="sm:col-span-2"><PasswordInput label="Senha" name="password" autoComplete="new-password" placeholder="Crie uma senha" icon={LockKeyhole} required minLength={12} maxLength={128} error={fieldErrors.password} /></div>
+          <div className="sm:col-span-2"><LegalAcceptanceSection value={legalAcceptance} onChange={setLegalAcceptance} error={fieldErrors.legal_acceptance} /></div>
           <div className="sm:col-span-2"><Turnstile action="customer_registration" onToken={setToken} />{error && <div className="mt-4"><Notice kind={Object.keys(fieldErrors).length ? 'validation' : 'error'}>{error}</Notice></div>}
-            <div className="mt-6 border-t border-[#dbe6f4] pt-6"><Button className="w-full" disabled={busy}>{busy ? 'Criando…' : 'Criar conta'}</Button></div>
+            <div className="mt-6 border-t border-[#dbe6f4] pt-6"><Button className="w-full" disabled={busy || !legalAcceptance.terms || !legalAcceptance.privacy}>{busy ? 'Criando…' : 'Criar conta'}</Button></div>
           </div>
         </form>
       </div>

@@ -1,5 +1,6 @@
 import io
 import uuid
+from datetime import timedelta
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
@@ -31,11 +32,12 @@ class CompanyServiceContractTests(APITestCase):
         return self.client.post("/api/v1/company/services/", payload, format="json")
 
     def test_service_can_be_created_without_professional_and_edited(self):
-        created = self.create()
+        created = self.create(slot_interval="00:10:00")
         self.assertEqual(created.status_code, status.HTTP_201_CREATED)
         service = Service.objects.get(pk=created.data["id"])
         self.assertEqual(service.company, self.company)
         self.assertEqual(service.professionals.count(), 0)
+        self.assertEqual(service.slot_interval, timedelta(minutes=10))
         updated = self.client.patch(
             f"/api/v1/company/services/{service.id}/",
             {"name": "Edited service", "is_active": False},
@@ -44,6 +46,13 @@ class CompanyServiceContractTests(APITestCase):
         self.assertEqual(updated.status_code, status.HTTP_200_OK)
         service.refresh_from_db()
         self.assertEqual((service.name, service.is_active), ("Edited service", False))
+
+    def test_service_rejects_invalid_slot_intervals(self):
+        for value in ("00:00:00", "24:01:00", "00:05:30"):
+            with self.subTest(value=value):
+                response = self.create(slot_interval=value)
+                self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+                self.assertIn("slot_interval", response.data["errors"])
 
     def test_service_accepts_one_or_multiple_current_company_professionals(self):
         one = self.create(professional_ids=[str(self.first.id)])
@@ -161,6 +170,14 @@ class CustomerProfileSecurityTests(APITestCase):
         self.assertIn("authorization_token", response.data["errors"])
         self.customer.refresh_from_db()
         self.assertTrue(self.customer.check_password(PASSWORD))
+
+    def test_avatar_rejects_excessive_dimensions_even_when_file_is_small(self):
+        stream = io.BytesIO()
+        Image.new("RGB", (5000, 1), "blue").save(stream, format="PNG")
+        upload = SimpleUploadedFile("wide.png", stream.getvalue(), content_type="image/png")
+        response = self.client.patch("/api/v1/customers/profile/me/", {"avatar": upload}, format="multipart")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("avatar", response.data["errors"])
 
     def test_company_account_cannot_use_customer_profile_routes(self):
         owner, _ = create_company("not-customer")

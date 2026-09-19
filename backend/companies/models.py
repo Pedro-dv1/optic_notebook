@@ -140,6 +140,9 @@ class CompanyBookingSettings(UUIDTimestampedModel):
         default=timedelta(hours=24),
         validators=[MinValueValidator(timedelta())],
     )
+    whatsapp_waiting_message = models.TextField(blank=True, max_length=1000)
+    whatsapp_confirmed_message = models.TextField(blank=True, max_length=1000)
+    whatsapp_cancelled_message = models.TextField(blank=True, max_length=1000)
 
     class Meta:
         constraints = [

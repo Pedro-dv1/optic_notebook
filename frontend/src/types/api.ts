@@ -107,6 +107,7 @@ export interface Service {
   description: string
   price: string | null
   duration: string
+  slot_interval: string
   is_active?: boolean
   professional_ids?: string[]
 }
@@ -145,6 +146,7 @@ export interface Appointment {
   status: AppointmentStatus
   can_cancel: boolean
   can_reschedule: boolean
+  whatsapp_message: string
   management_token?: string
 }
 
@@ -171,9 +173,11 @@ export interface CompanyCustomer {
 }
 
 export interface BookingSettings {
-  slot_interval: string
   late_tolerance: string
   minimum_change_notice: string
+  whatsapp_waiting_message: string
+  whatsapp_confirmed_message: string
+  whatsapp_cancelled_message: string
   updated_at: string
 }
 

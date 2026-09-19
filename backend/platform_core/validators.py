@@ -47,9 +47,11 @@ def validate_image_upload(value, *, max_size=2 * 1024 * 1024):
         raise serializers.ValidationError("A imagem deve ter no máximo 2 MB.")
     extensions = {"PNG": "png", "JPEG": "jpg", "WEBP": "webp"}
     try:
-        image = Image.open(value)
-        image_format = image.format
-        image.verify()
+        with Image.open(value) as image:
+            image_format = image.format
+            if image.width > 4096 or image.height > 4096 or image.width * image.height > 16_000_000:
+                raise serializers.ValidationError("A imagem deve ter no máximo 4096 × 4096 pixels.")
+            image.verify()
     except (Image.DecompressionBombError, UnidentifiedImageError, OSError, ValueError):
         raise serializers.ValidationError("Envie uma imagem PNG, JPEG ou WebP válida.")
     finally:

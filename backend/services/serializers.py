@@ -15,7 +15,7 @@ class ServiceAdminSerializer(serializers.ModelSerializer):
     class Meta:
         model = Service
         fields = (
-            "id", "name", "description", "price", "duration", "is_active",
+            "id", "name", "description", "price", "duration", "slot_interval", "is_active",
             "professional_ids", "created_at", "updated_at",
         )
         read_only_fields = ("id", "created_at", "updated_at")
@@ -36,8 +36,15 @@ class ServiceAdminSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("A duração deve usar minutos inteiros.")
         return value
 
+    def validate_slot_interval(self, value):
+        if value.total_seconds() > 86_400:
+            raise serializers.ValidationError("O intervalo não pode exceder um dia.")
+        if value.total_seconds() % 60:
+            raise serializers.ValidationError("O intervalo deve usar minutos inteiros.")
+        return value
+
 
 class PublicServiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Service
-        fields = ("id", "name", "description", "price", "duration")
+        fields = ("id", "name", "description", "price", "duration", "slot_interval")
