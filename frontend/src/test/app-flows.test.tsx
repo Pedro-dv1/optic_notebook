@@ -55,6 +55,38 @@ describe('rotas e fluxos principais', () => {
     expect(screen.queryByRole('heading', { name: /como você deseja acessar/i })).not.toBeInTheDocument()
   })
 
+  it('mostra os dados do card e pesquisa somente nos próximos agendamentos', async () => {
+    window.history.replaceState({}, '', '/cliente')
+    const appointment = {
+      id: 'appointment-id', company: 'company-id', company_name: 'Empresa Real', company_slug: 'empresa-real',
+      company_logo: 'http://localhost/media/company-logos/logo.png', company_address: 'Rua Um, 10', company_city: 'Jales', company_state: 'SP',
+      service: 'service-id', service_name: 'Consulta', professional: 'professional-id', professional_name: 'Marina',
+      starts_at: '2030-01-10T10:00:00-03:00', ends_at: '2030-01-10T10:30:00-03:00', customer_name: 'Ana Cliente',
+      customer_email: customer.email, customer_whatsapp: customer.whatsapp, customer_notes: '', customer_avatar: null,
+      status: 'WAITING_CONFIRMATION', can_cancel: true, can_reschedule: true, whatsapp_message: '',
+    }
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.endsWith('/auth/csrf/')) return json(null, 204)
+      if (url.endsWith('/auth/refresh/')) return json({ access: 'restored' })
+      if (url.endsWith('/auth/me/')) return json(customer)
+      if (url.endsWith('/customers/appointments/')) return json({ count: 2, next: null, previous: null, results: [appointment, { ...appointment, id: 'past-appointment', company_name: 'Empresa do Histórico', company_logo: null, company_address: 'Rua Antiga, 20', starts_at: '2020-01-10T10:00:00-03:00', ends_at: '2020-01-10T10:30:00-03:00', status: 'CANCELLED' }] })
+      return json({}, 404)
+    }))
+    renderApp(<App />)
+    const image = await screen.findByRole('img', { name: 'Imagem de Empresa Real' })
+    expect(image).toHaveClass('w-full', 'md:w-52')
+    expect(screen.getByText('Rua Um, 10 · Jales - SP')).toBeInTheDocument()
+    const status = screen.getByText('Aguardando confirmação')
+    expect(status.querySelector('svg')).not.toBeNull()
+    expect(status.querySelector('span')).toBeNull()
+    const search = screen.getByRole('searchbox', { name: 'Pesquisar empresa nos próximos agendamentos' })
+    expect(search.closest('label')).toHaveClass('w-full', 'sm:max-w-md')
+    fireEvent.change(search, { target: { value: 'outra empresa' } })
+    expect(screen.getByText('Nenhuma empresa encontrada')).toBeInTheDocument()
+    expect(screen.getByText('Empresa do Histórico')).toBeInTheDocument()
+  })
+
   it('usa a identidade correta no header e exibe o footer sem links falsos', async () => {
     vi.stubGlobal('fetch', anonymousResponder())
     renderApp(<App />)

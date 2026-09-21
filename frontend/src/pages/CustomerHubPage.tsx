@@ -67,8 +67,8 @@ export default function CustomerHubPage() {
         <h2 id="companies-title" className="sr-only">Empresas disponíveis</h2>
         <label className="relative block"><span className="sr-only">Pesquisar empresa, serviço ou área</span><Search className="pointer-events-none absolute left-4 top-1/2 size-6 -translate-y-1/2 text-[#164c9c]" aria-hidden="true" /><input className="field !min-h-14 !rounded-xl !pl-12 !text-base" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Empresa, serviço ou área" /></label>
         <div className="mt-5 flex flex-wrap gap-3">
-          <button ref={filterButtonRef} type="button" className="btn btn-secondary !min-h-12 !px-5 !text-[#071044]" onClick={openFilters} aria-expanded={filtersOpen} aria-controls="company-filters"><ListFilter className="size-5" /> Filtrar{hasFilters ? ' · ativo' : ''}</button>
-          <button type="button" className="btn btn-secondary !min-h-12 !px-5 !text-[#071044]" onClick={() => { setOrdering((value) => value === 'name' ? '-name' : 'name'); setPage(1) }} aria-label={`Alterar ordenação para ${ordering === 'name' ? 'Z a A' : 'A a Z'}`}><SlidersHorizontal className="size-5" /> {ordering === 'name' ? 'A - Z' : 'Z - A'}</button>
+          <button ref={filterButtonRef} type="button" className="btn btn-secondary !min-h-12 !px-5" onClick={openFilters} aria-expanded={filtersOpen} aria-controls="company-filters"><ListFilter className="size-5" /> Filtrar{hasFilters ? ' · ativo' : ''}</button>
+          <button type="button" className="btn btn-secondary !min-h-12 !px-5" onClick={() => { setOrdering((value) => value === 'name' ? '-name' : 'name'); setPage(1) }} aria-label={`Alterar ordenação para ${ordering === 'name' ? 'Z a A' : 'A a Z'}`}><SlidersHorizontal className="size-5" /> {ordering === 'name' ? 'A - Z' : 'Z - A'}</button>
         </div>
         {options.isError && <div className="mt-4"><Notice>{apiErrorMessage(options.error)}</Notice></div>}
         {options.isSuccess && !companyOptions && <div className="mt-4"><Notice>As opções de filtros estão temporariamente indisponíveis.</Notice></div>}

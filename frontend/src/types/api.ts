@@ -132,6 +132,10 @@ export interface Appointment {
   company: string
   company_name: string
   company_slug: string
+  company_logo: string | null
+  company_address: string
+  company_city: string
+  company_state: string
   service: string
   service_name: string
   professional: string

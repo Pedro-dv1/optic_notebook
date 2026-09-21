@@ -12,6 +12,10 @@ from .messaging import appointment_whatsapp_message
 class AppointmentSerializer(serializers.ModelSerializer):
     company_name = serializers.CharField(source="company.name", read_only=True)
     company_slug = serializers.CharField(source="company.slug", read_only=True)
+    company_logo = serializers.ImageField(source="company.logo", read_only=True)
+    company_address = serializers.CharField(source="company.address", read_only=True)
+    company_city = serializers.CharField(source="company.city", read_only=True)
+    company_state = serializers.CharField(source="company.state", read_only=True)
     service_name = serializers.CharField(source="service.name", read_only=True)
     professional_name = serializers.CharField(source="professional.name", read_only=True)
     customer_avatar = serializers.SerializerMethodField()
@@ -22,7 +26,8 @@ class AppointmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Appointment
         fields = (
-            "id", "company", "company_name", "company_slug", "service", "service_name", "professional", "professional_name",
+            "id", "company", "company_name", "company_slug", "company_logo", "company_address", "company_city",
+            "company_state", "service", "service_name", "professional", "professional_name",
             "starts_at", "ends_at", "customer_name", "customer_email", "customer_whatsapp",
             "customer_notes", "customer_avatar", "status", "can_cancel", "can_reschedule", "whatsapp_message",
             "created_at", "updated_at",

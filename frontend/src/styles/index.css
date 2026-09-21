@@ -49,7 +49,7 @@ a { color: inherit; text-decoration: none; }
   .btn { @apply inline-flex min-h-11 items-center justify-center gap-2 border px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-45; border-radius: var(--radius-sm); }
   .btn:active:not(:disabled) { transform: translateY(1px); }
   .btn-primary { @apply border-[#2f80ed] bg-[#1f64b6] text-white hover:bg-[#2f80ed]; }
-  .btn-secondary { @apply border-[#9bc2ec] bg-white text-[#0b6fd3] hover:bg-[#f2f8ff]; }
+  .btn-secondary { @apply border-[#2f80ed] bg-[#1f64b6] text-white hover:bg-[#2f80ed]; }
   .btn-outline { @apply border-[#7182a8] bg-transparent text-[#30436e] hover:border-[#2f80ed] hover:bg-[#f2f8ff] hover:text-[#0b6fd3]; }
   .btn-danger { @apply border-[#e3a1a8] bg-[#fff4f5] text-[#a52d39] hover:bg-[#ffe9eb]; }
   .btn-success { @apply border-[#65b98a] bg-[#26704c] text-white hover:bg-[#31885e]; }
@@ -172,8 +172,8 @@ a { color: inherit; text-decoration: none; }
 .public-page [id$="-error"] { color: #a72733; }
 .public-page .btn-primary { min-height: 3rem; border-color: #087cf0; border-radius: .65rem; background: #087cf0; font-size: .95rem; }
 .public-page .btn-primary:hover { background: #006bd8; }
-.public-page .btn-secondary { min-height: 3rem; border-color: #80b8ef; border-radius: .65rem; background: #fff; color: #0870df; }
-.public-page .btn-secondary:hover { background: #f4f9ff; }
+.public-page .btn-secondary { min-height: 3rem; border-color: #087cf0; border-radius: .65rem; background: #087cf0; color: #fff; }
+.public-page .btn-secondary:hover { background: #006bd8; }
 .public-page .public-error { border-color: #efb2b7; background: #fff4f4; color: #9c2630; }
 .public-page .notice-error, .public-page .notice-validation { border-color: #efb2b7; background: #fff4f4; color: #9c2630; }
 .public-page .notice-success { border-color: #8fd2ad; background: #f1fbf5; color: #17633e; }

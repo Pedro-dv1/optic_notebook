@@ -39,6 +39,8 @@ class PublicBookingTests(APITestCase):
         self.assertIsNone(appointment.customer)
 
     def test_authenticated_customer_uses_saved_data(self):
+        self.company.address = "Rua Um, 10"
+        self.company.save(update_fields=("address",))
         customer = User.objects.create_user(
             "saved@example.com", PASSWORD, full_name="Saved Name", whatsapp="+5511944444444"
         )
@@ -53,6 +55,10 @@ class PublicBookingTests(APITestCase):
         self.assertEqual(appointment.customer_name, customer.full_name)
         self.assertEqual(appointment.customer_email, customer.email)
         self.assertEqual(appointment.customer_whatsapp, customer.whatsapp)
+        self.assertEqual(response.data["company_address"], "Rua Um, 10")
+        self.assertEqual(response.data["company_city"], "Jales")
+        self.assertEqual(response.data["company_state"], "SP")
+        self.assertIsNone(response.data["company_logo"])
 
     def test_authenticated_customer_can_override_snapshot_without_changing_profile(self):
         customer = User.objects.create_user(
