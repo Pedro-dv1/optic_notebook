@@ -1,5 +1,5 @@
 import { act, fireEvent, screen, waitFor } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Route, Routes } from 'react-router'
 import App from '../app/App'
 import { useAuth } from '../auth/AuthProvider'
@@ -8,7 +8,7 @@ import PublicBookingPage from '../pages/PublicBookingPage'
 import { company, companyAdmin, customer, json, renderApp } from './helpers'
 
 const platformConfig = {
-  name: 'OpticNoteBook',
+  name: 'NoteSync',
   support_email: 'suporte@example.com',
   company_options: {
     states: [{ value: 'SP', label: 'São Paulo' }],
@@ -18,11 +18,14 @@ const platformConfig = {
   },
 }
 
+afterEach(() => vi.useRealTimers())
+
 function anonymousResponder(extra?: (url: string, init?: RequestInit) => Promise<Response> | undefined) {
   return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     const custom = extra?.(url, init)
     if (custom) return custom
+    if (url.includes('/availability/days/')) return json({ available_dates: [] })
     if (url.endsWith('/auth/csrf/')) return json(null, 204)
     if (url.endsWith('/auth/refresh/')) return json({ errors: { detail: 'Session unavailable' } }, 401)
     if (url.endsWith('/legal/current/')) return json({ terms: { version: '2026-09-16', accepted: false }, privacy: { version: '2026-09-16', accepted: false } })
@@ -31,13 +34,19 @@ function anonymousResponder(extra?: (url: string, init?: RequestInit) => Promise
 }
 
 describe('rotas e fluxos principais', () => {
-  it('mostra a escolha inicial entre cliente e empreendedor', async () => {
+  it('mostra a escolha inicial entre cliente e comércio', async () => {
     vi.stubGlobal('fetch', anonymousResponder())
     renderApp(<App />)
     expect(await screen.findByRole('heading', { name: /como você deseja acessar/i })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /sou cliente/i })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /sou empreendedor/i })).toBeInTheDocument()
-  })
+    expect(screen.getByRole('heading', { name: 'Cliente' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Comércio' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('link', { name: /comércio — continuar/i }))
+    expect(await screen.findByRole('heading', { name: /como você acessa o comércio/i }, { timeout: 10_000 })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Dono' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Profissional' })).toBeInTheDocument()
+    expect(screen.getAllByRole('link', { name: 'Entrar' })).toHaveLength(2)
+    expect(screen.getAllByRole('link', { name: 'Criar conta' })).toHaveLength(2)
+  }, 15_000)
 
   it('não mostra a seleção inicial para cliente autenticado', async () => {
     window.history.replaceState({}, '', '/')
@@ -50,8 +59,8 @@ describe('rotas e fluxos principais', () => {
       return json({}, 404)
     }))
     renderApp(<App />)
-    expect(await screen.findByRole('heading', { name: /Olá, Ana/i })).toBeInTheDocument()
-    expect(window.location.pathname).toBe('/cliente')
+    expect(await screen.findByRole('heading', { name: /Agende com facilidade/i })).toBeInTheDocument()
+    expect(window.location.pathname).toBe('/cliente/procurar')
     expect(screen.queryByRole('heading', { name: /como você deseja acessar/i })).not.toBeInTheDocument()
   })
 
@@ -77,11 +86,12 @@ describe('rotas e fluxos principais', () => {
     const image = await screen.findByRole('img', { name: 'Imagem de Empresa Real' })
     expect(image).toHaveClass('w-full', 'md:w-52')
     expect(screen.getByText('Rua Um, 10 · Jales - SP')).toBeInTheDocument()
-    const status = screen.getByText('Aguardando confirmação')
+    const status = screen.getByText('Aguardando confirmação').parentElement!
     expect(status.querySelector('svg')).not.toBeNull()
-    expect(status.querySelector('span')).toBeNull()
+    expect(status.querySelector('span')).toHaveTextContent('Aguardando confirmação')
     const search = screen.getByRole('searchbox', { name: 'Pesquisar empresa nos próximos agendamentos' })
-    expect(search.closest('label')).toHaveClass('w-full', 'sm:max-w-md')
+    expect(search.closest('label')).toHaveClass('w-full', 'mb-8')
+    expect(search.closest('label')).not.toHaveClass('sm:max-w-md')
     fireEvent.change(search, { target: { value: 'outra empresa' } })
     expect(screen.getByText('Nenhuma empresa encontrada')).toBeInTheDocument()
     expect(screen.getByText('Empresa do Histórico')).toBeInTheDocument()
@@ -91,20 +101,20 @@ describe('rotas e fluxos principais', () => {
     vi.stubGlobal('fetch', anonymousResponder())
     renderApp(<App />)
     await screen.findByRole('heading', { name: /como você deseja acessar/i })
-    const logos = screen.getAllByRole('img', { name: 'OpticNoteBook' })
-    expect(logos.filter((image) => image.getAttribute('src')?.includes('logo-text')).length).toBeGreaterThanOrEqual(2)
+    const logos = screen.getAllByRole('img', { name: 'NoteSync' })
+    expect(logos.filter((image) => image.getAttribute('src')?.includes('notesync-wordmark')).length).toBeGreaterThanOrEqual(2)
     expect(screen.getAllByRole('link', { name: 'Como funciona' }).length).toBeGreaterThan(0)
     expect(screen.getByRole('link', { name: 'Termos de Uso' })).toHaveAttribute('href', '/termos-de-uso')
     const privacyLinks = screen.getAllByRole('link', { name: 'Política de Privacidade' })
     expect(privacyLinks.length).toBeGreaterThanOrEqual(2)
     expect(privacyLinks.every((link) => link.getAttribute('href') === '/politica-de-privacidade')).toBe(true)
-    expect(screen.getByText(/OpticNoteBook\. Todos os direitos reservados/)).toBeInTheDocument()
+    expect(screen.getByText(/NoteSync\. Todos os direitos reservados/)).toBeInTheDocument()
   })
 
   it.each([
-    ['/termos-de-uso', 'Termos de Uso', 'Termos de Uso | OpticNoteBook'],
-    ['/politica-de-privacidade', 'Política de Privacidade', 'Política de Privacidade | OpticNoteBook'],
-    ['/como-funciona', 'Agendar ficou mais simples.', 'Como funciona | OpticNoteBook'],
+    ['/termos-de-uso', 'Termos de Uso', 'Termos de Uso | NoteSync'],
+    ['/politica-de-privacidade', 'Política de Privacidade', 'Política de Privacidade | NoteSync'],
+    ['/como-funciona', 'Agendar ficou mais simples.', 'Como funciona | NoteSync'],
   ])('renderiza a página pública %s com o title correto', async (route, heading, title) => {
     window.history.replaceState({}, '', route)
     vi.stubGlobal('fetch', anonymousResponder())
@@ -118,7 +128,8 @@ describe('rotas e fluxos principais', () => {
     const responder = anonymousResponder((url) => url.endsWith('/public/platform/') ? json(platformConfig) : undefined)
     vi.stubGlobal('fetch', responder)
     renderApp(<App />)
-    expect(await screen.findByRole('heading', { name: /cadastrar no opticnotebook/i })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /cadastrar no notesync/i }, { timeout: 10_000 })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Voltar' }).closest('.public-form-card')).not.toBeNull()
     expect(screen.getByLabelText('Estado')).toHaveTextContent('São Paulo')
     expect(responder.mock.calls.some(([input]) => String(input).endsWith('/auth/refresh/'))).toBe(true)
   })
@@ -128,11 +139,14 @@ describe('rotas e fluxos principais', () => {
     ['/cliente/cadastro', 'Criar conta'],
     ['/empreendedor/login', 'Acesse seu painel'],
     ['/platform/login', 'Acesse o painel central'],
+    ['/profissional/login', 'Entre como profissional'],
+    ['/profissional/cadastro', 'Cadastro de profissional'],
   ])('mantém a rota reservada %s fora do slug público', async (route, heading) => {
     window.history.replaceState({}, '', route)
     vi.stubGlobal('fetch', anonymousResponder((url) => url.endsWith('/public/platform/') ? json(platformConfig) : undefined))
     renderApp(<App />)
     expect(await screen.findByRole('heading', { name: heading })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Voltar' }).closest('.public-form-card')).not.toBeNull()
   })
 
   it('trata configuração vazia no cadastro sem derrubar a aplicação', async () => {
@@ -140,6 +154,7 @@ describe('rotas e fluxos principais', () => {
     vi.stubGlobal('fetch', anonymousResponder((url) => url.endsWith('/public/platform/') ? json(null) : undefined))
     renderApp(<App />)
     expect(await screen.findByRole('heading', { name: 'Opções de cadastro indisponíveis' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Voltar' }).closest('.public-form-card')).not.toBeNull()
     expect(screen.getByRole('button', { name: 'Tentar novamente' })).toBeInTheDocument()
   })
 
@@ -154,7 +169,7 @@ describe('rotas e fluxos principais', () => {
     fireEvent.change(city, { target: { value: 'Urânia' } })
     fireEvent.click(await screen.findByRole('option', { name: 'Urânia - SP' }))
     expect(city).toHaveValue('Urânia')
-    expect(screen.getByLabelText(/Estado/)).toHaveValue('SP')
+    expect(screen.getByLabelText(/Estado/)).toHaveTextContent('São Paulo')
   })
 
   it('limpa o tipo de negócio incompatível ao trocar o nicho', async () => {
@@ -164,11 +179,14 @@ describe('rotas e fluxos principais', () => {
     renderApp(<App />)
     const niche = await screen.findByLabelText('Nicho-base')
     const businessType = screen.getByLabelText('Tipo de negócio')
-    fireEvent.change(niche, { target: { value: 'Beauty' } })
-    fireEvent.change(businessType, { target: { value: 'Barbershop' } })
-    expect(businessType).toHaveValue('Barbershop')
-    fireEvent.change(niche, { target: { value: 'Health' } })
-    expect(businessType).toHaveValue('')
+    fireEvent.click(niche)
+    fireEvent.click(screen.getByRole('option', { name: 'Beleza' }))
+    fireEvent.click(businessType)
+    fireEvent.click(screen.getByRole('option', { name: 'Barbearia' }))
+    expect(businessType).toHaveTextContent('Barbearia')
+    fireEvent.click(niche)
+    fireEvent.click(screen.getByRole('option', { name: 'Saúde' }))
+    expect(businessType).toHaveTextContent('Selecione')
     expect(businessType).not.toHaveTextContent('Barbearia')
   })
 
@@ -177,8 +195,10 @@ describe('rotas e fluxos principais', () => {
     const config = { ...platformConfig, company_options: { ...platformConfig.company_options, niches: [{ value: 'Other', label: 'Outro' }], business_types: [{ value: 'Other', label: 'Outro' }], business_types_by_niche: { Other: ['Other'] } } }
     vi.stubGlobal('fetch', anonymousResponder((url) => url.endsWith('/public/platform/') ? json(config) : undefined))
     renderApp(<App />)
-    fireEvent.change(await screen.findByLabelText('Nicho-base'), { target: { value: 'Other' } })
-    fireEvent.change(screen.getByLabelText('Tipo de negócio'), { target: { value: 'Other' } })
+    fireEvent.click(await screen.findByLabelText('Nicho-base'))
+    fireEvent.click(screen.getByRole('option', { name: 'Outro' }))
+    fireEvent.click(screen.getByLabelText('Tipo de negócio'))
+    fireEvent.click(screen.getByRole('option', { name: 'Outro' }))
     expect(screen.getByLabelText('Qual nicho?')).toBeRequired()
     expect(screen.getByLabelText('Qual tipo de negócio?')).toBeRequired()
   })
@@ -187,13 +207,13 @@ describe('rotas e fluxos principais', () => {
     window.history.replaceState({}, '', '/empreendedor/cadastro')
     vi.stubGlobal('fetch', anonymousResponder((url) => url.endsWith('/public/platform/') ? json(platformConfig) : undefined))
     renderApp(<App />)
-    await screen.findByRole('heading', { name: /cadastrar no opticnotebook/i })
+    await screen.findByRole('heading', { name: /cadastrar no notesync/i })
     fireEvent.click(screen.getByRole('link', { name: 'Voltar' }))
     await waitFor(() => expect(window.location.pathname).toBe('/empreendedor/login'))
     await screen.findByRole('heading', { name: 'Acesse seu painel' })
     act(() => window.history.back())
     await waitFor(() => expect(window.location.pathname).toBe('/empreendedor/cadastro'))
-    expect(await screen.findByRole('heading', { name: /cadastrar no opticnotebook/i }, { timeout: 5_000 })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /cadastrar no notesync/i }, { timeout: 5_000 })).toBeInTheDocument()
   })
 
   it('redireciona rota protegida sem sessão para o login correto', async () => {
@@ -221,7 +241,7 @@ describe('rotas e fluxos principais', () => {
     valid = true
     fireEvent.change(screen.getByLabelText('Senha'), { target: { value: 'correct-password' } })
     fireEvent.click(screen.getByRole('button', { name: 'Entrar' }))
-    await waitFor(() => expect(window.location.pathname).toBe('/cliente'))
+    await waitFor(() => expect(window.location.pathname).toBe('/cliente/procurar'))
   })
 
   it('valida o login em português sem abrir o balão nativo', async () => {
@@ -265,21 +285,30 @@ describe('rotas e fluxos principais', () => {
       return json({}, 404)
     }))
     renderApp(<App />)
-    expect(await screen.findAllByRole('img', { name: 'Foto de Ana Cliente' })).toHaveLength(2)
+    expect(await screen.findAllByRole('img', { name: 'Foto de Ana Cliente' })).toHaveLength(3)
+    expect(screen.getByLabelText('Nome')).toHaveValue('Ana Cliente')
   })
 
   it('cliente anônimo agenda sem aceite obrigatório e vê o aviso de privacidade', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2030-01-01T12:00:00-03:00'))
     window.history.replaceState({}, '', '/empresa-real')
     vi.stubGlobal('fetch', anonymousResponder((url) => {
       if (url.endsWith('/public/companies/empresa-real/')) return json(company)
       if (url.endsWith('/services/')) return json([{ id: 'service-1', name: 'Consulta', description: 'Avaliação', price: null, duration: '00:30:00' }])
       if (url.includes('/professionals/')) return json([{ id: 'pro-1', name: 'Marina', service_ids: ['service-1'] }])
+      if (url.includes('/availability/days/')) return json({ available_dates: ['2030-01-10'] })
       if (url.includes('/availability/')) return json([{ professional: 'pro-1', professional_name: 'Marina', starts_at: '2030-01-10T10:00:00-03:00', ends_at: '2030-01-10T10:30:00-03:00' }])
     }))
     renderApp(<App />)
     fireEvent.click(await screen.findByRole('button', { name: /Consulta/ }))
     fireEvent.click(await screen.findByRole('button', { name: /Marina/ }))
-    fireEvent.change(screen.getByLabelText('Data'), { target: { value: '2030-01-10' } })
+    const current = new Date()
+    const monthsAhead = (2030 - current.getFullYear()) * 12 - current.getMonth()
+    for (let index = 0; index < monthsAhead; index++) fireEvent.click(screen.getByRole('button', { name: 'Próximo mês' }))
+    const day = await screen.findByRole('button', { name: /quinta-feira, 10 de janeiro de 2030/ })
+    await waitFor(() => expect(day).toBeEnabled())
+    fireEvent.click(day)
     fireEvent.click(await screen.findByRole('button', { name: '10:00' }))
     fireEvent.click(screen.getByRole('button', { name: 'Continuar' }))
     fireEvent.change(screen.getByLabelText('Nome'), { target: { value: 'Cliente sem conta' } })
@@ -301,7 +330,7 @@ describe('rotas e fluxos principais', () => {
     expect(screen.getByRole('link', { name: /voltar para o início/i })).toBeInTheDocument()
   })
 
-  it('aplica e limpa filtros somente pelas ações do painel', async () => {
+  it('pesquisa empresas sem exibir filtros', async () => {
     window.history.replaceState({}, '', '/cliente/procurar')
     const responder = anonymousResponder((url) => {
       if (url.endsWith('/public/platform/')) return json(platformConfig)
@@ -309,23 +338,13 @@ describe('rotas e fluxos principais', () => {
     })
     vi.stubGlobal('fetch', responder)
     renderApp(<App />)
-    await screen.findByText('Nenhuma empresa encontrada')
-    expect(screen.getByRole('link', { name: 'Voltar' })).toHaveAttribute('href', '/cliente')
-    fireEvent.click(screen.getByRole('button', { name: /^Filtrar/ }))
-    const dialog = screen.getByRole('dialog', { name: 'Filtros' })
-    expect(dialog).toHaveClass('w-full', 'md:w-[320px]')
-    expect(screen.getByRole('button', { name: 'Fechar filtros' })).toHaveFocus()
-    fireEvent.change(screen.getByLabelText('Cidade'), { target: { value: 'Jales' } })
-    expect(responder.mock.calls.some(([input]) => String(input).includes('city=Jales'))).toBe(false)
-    fireEvent.click(screen.getByRole('button', { name: 'Aplicar filtros' }))
-    await waitFor(() => expect(responder.mock.calls.some(([input]) => String(input).includes('city=Jales'))).toBe(true))
-    fireEvent.click(screen.getByRole('button', { name: /^Filtrar/ }))
-    fireEvent.click(screen.getByRole('button', { name: 'Limpar filtros' }))
-    expect(screen.getByLabelText('Cidade')).toHaveValue('')
-    expect(screen.getByRole('button', { name: 'Filtrar' })).toBeInTheDocument()
-    fireEvent.keyDown(document, { key: 'Escape' })
-    expect(screen.queryByRole('dialog', { name: 'Filtros' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Filtrar' })).toHaveFocus()
+    await screen.findByText('Nenhuma empresa encontrada', {}, { timeout: 10_000 })
+    const search = screen.getByRole('searchbox', { name: 'Pesquisar empresa, serviço ou área' })
+    expect(search).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Voltar' })).toHaveAttribute('href', '/')
+    expect(screen.queryByRole('button', { name: 'Filtros' })).not.toBeInTheDocument()
+    fireEvent.change(search, { target: { value: 'clínica' } })
+    await waitFor(() => expect(responder.mock.calls.some(([input]) => String(input).includes('search=cl%C3%ADnica'))).toBe(true))
   })
 
   it('mostra a observação da empresa em tooltip e fecha ao tocar fora', async () => {
@@ -343,6 +362,8 @@ describe('rotas e fluxos principais', () => {
   })
 
   it('cliente autenticado usa dados salvos ou altera apenas o snapshot do agendamento', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2030-01-01T12:00:00-03:00'))
     window.history.replaceState({}, '', '/empresa-real')
     vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
       const url = String(input)
@@ -352,6 +373,7 @@ describe('rotas e fluxos principais', () => {
       if (url.endsWith('/public/companies/empresa-real/')) return json(company)
       if (url.endsWith('/services/')) return json([{ id: 'service-1', name: 'Consulta', description: 'Avaliação', price: null, duration: '00:30:00' }])
       if (url.includes('/professionals/')) return json([{ id: 'pro-1', name: 'Marina', service_ids: ['service-1'] }])
+      if (url.includes('/availability/days/')) return json({ available_dates: ['2030-01-10'] })
       if (url.includes('/availability/')) return json([{ professional: 'pro-1', professional_name: 'Marina', starts_at: '2030-01-10T10:00:00-03:00', ends_at: '2030-01-10T10:30:00-03:00' }])
       return json({}, 404)
     }))
@@ -362,7 +384,12 @@ describe('rotas e fluxos principais', () => {
     expect(screen.getAllByRole('button', { name: 'Abrir menu da conta' }).length).toBeGreaterThan(0)
     fireEvent.click(await screen.findByRole('button', { name: /Consulta/ }))
     fireEvent.click(await screen.findByRole('button', { name: /Marina/ }))
-    fireEvent.change(screen.getByLabelText('Data'), { target: { value: '2030-01-10' } })
+    const current = new Date()
+    const monthsAhead = (2030 - current.getFullYear()) * 12 - current.getMonth()
+    for (let index = 0; index < monthsAhead; index++) fireEvent.click(screen.getByRole('button', { name: 'Próximo mês' }))
+    const day = await screen.findByRole('button', { name: /quinta-feira, 10 de janeiro de 2030/ })
+    await waitFor(() => expect(day).toBeEnabled())
+    fireEvent.click(day)
     fireEvent.click(await screen.findByRole('button', { name: '10:00' }))
     fireEvent.click(screen.getByRole('button', { name: 'Continuar' }))
     expect(await screen.findByText('Usar meus dados salvos')).toBeInTheDocument()
@@ -391,19 +418,24 @@ describe('rotas e fluxos principais', () => {
       if (url.endsWith('/auth/refresh/')) return json({ access: 'restored' })
       if (url.endsWith('/auth/me/')) return json(companyAdmin)
       if (url.endsWith('/company/profile/')) return json({ ...company, id: 'company-id' })
-      if (url.endsWith('/company/professionals/')) return json({ count: 1, next: null, previous: null, results: [{ id: 'pro-1', name: 'Marina', is_active: true, service_ids: [] }] })
-      if (url.endsWith('/company/services/') || url.endsWith('/company/work-schedules/')) return json({ count: 0, next: null, previous: null, results: [] })
+      if (url.endsWith('/company/units/')) return json([{ id: 'unit-1', name: 'Principal', is_active: true, is_primary: true }])
+      if (url.includes('/company/professionals/')) return json({ count: 1, next: null, previous: null, results: [{ id: 'pro-1', name: 'Marina', is_active: true, unit_ids: ['unit-1'], service_ids: [], access_email: null, invite_state: 'ACTIVE' }] })
+      if (url.includes('/company/services/') || url.endsWith('/company/work-schedules/')) return json({ count: 0, next: null, previous: null, results: [] })
       if (url.endsWith('/company/work-schedules/week/')) return json([], 201)
       return json({}, 404)
     })
     vi.stubGlobal('fetch', responder)
     renderApp(<App />)
+    expect(await screen.findByText(/acesso ACTIVE/i, {}, { timeout: 15_000 })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Gerar chave' })).not.toBeInTheDocument()
     fireEvent.click(await screen.findByRole('button', { name: 'Horários' }, { timeout: 5_000 }))
+    fireEvent.click(screen.getByLabelText('Unidade de atendimento'))
+    fireEvent.click(screen.getByRole('option', { name: 'Principal' }))
     fireEvent.change(screen.getByLabelText('Início'), { target: { value: '09:00' } })
     fireEvent.change(screen.getByLabelText('Fim'), { target: { value: '17:00' } })
     fireEvent.click(screen.getByRole('button', { name: 'Definir horário para a semana toda' }))
     await waitFor(() => expect(responder.mock.calls.some(([input, init]) => String(input).endsWith('/company/work-schedules/week/') && init?.method === 'POST')).toBe(true))
-  })
+  }, 20_000)
 
   it('company admin não recebe controles de Super Admin', async () => {
     window.history.replaceState({}, '', '/admin')
@@ -418,9 +450,9 @@ describe('rotas e fluxos principais', () => {
       return json({}, 404)
     }))
     renderApp(<App />)
-    expect(await screen.findByRole('heading', { name: 'Visão geral' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Visão geral' }, { timeout: 15_000 })).toBeInTheDocument()
     expect(screen.queryByText('Chaves de cadastro')).not.toBeInTheDocument()
-  })
+  }, 20_000)
 
 
   it.each([

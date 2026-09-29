@@ -1,6 +1,6 @@
-# OpticNoteBook
+# NoteSync
 
-O **OpticNoteBook** é um sistema de agendamentos desenvolvido com backend em **Python/Django** e frontend em **React**.
+O **NoteSync** é um sistema de agendamentos desenvolvido com backend em **Python/Django** e frontend em **React**.
 
 ## Tecnologias
 
@@ -34,7 +34,7 @@ Antes de iniciar o projeto, tenha instalado:
 
 ```bash
 git clone URL_DO_REPOSITORIO
-cd OpticNoteBook
+cd NoteSync
 ```
 
 ## Backend

@@ -1,4 +1,4 @@
-import { LuBuilding2 as Building2, LuCalendarDays as CalendarDays, LuClock3 as Clock3, LuKeyRound as KeyRound, LuLayoutDashboard as LayoutDashboard, LuLogOut as LogOut, LuMenu as Menu, LuScissors as Scissors, LuSettings2 as Settings2, LuUserRound as UserRound, LuUsers as Users, LuX as X } from 'react-icons/lu'
+import { LuBan as Ban, LuChartBar as BarChart3, LuBuilding2 as Building2, LuCalendarDays as CalendarDays, LuClock3 as Clock3, LuKeyRound as KeyRound, LuLayoutDashboard as LayoutDashboard, LuLogOut as LogOut, LuMenu as Menu, LuMessageSquare as MessageSquare, LuScissors as Scissors, LuSettings2 as Settings2, LuUserRound as UserRound, LuUsers as Users, LuX as X } from 'react-icons/lu'
 import { useState } from 'react'
 import { NavLink, Outlet } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
@@ -6,15 +6,19 @@ import { api, apiErrorMessage } from '../api/client'
 import { useAuth } from '../auth/AuthProvider'
 import type { Company } from '../types/api'
 import { Button, LoadingState, Notice } from './ui'
-import logo from '../assets/branding/OpticNoteBook-logo.svg'
+import logo from '../assets/branding/NoteSync-logo.svg'
 
 const companyItems = [
   { to: '/admin', label: 'Visão geral', icon: LayoutDashboard, end: true },
   { to: '/admin/agenda', label: 'Agenda', icon: CalendarDays },
   { to: '/admin/agendamentos', label: 'Agendamentos', icon: Clock3 },
+  { to: '/admin/unidades', label: 'Unidades', icon: Building2 },
   { to: '/admin/servicos', label: 'Serviços', icon: Scissors },
   { to: '/admin/profissionais', label: 'Profissionais', icon: UserRound },
   { to: '/admin/clientes', label: 'Clientes', icon: Users },
+  { to: '/admin/indisponibilidades', label: 'Indisponibilidades', icon: Ban },
+  { to: '/admin/avaliacoes', label: 'Avaliações', icon: MessageSquare },
+  { to: '/admin/relatorios', label: 'Relatórios', icon: BarChart3 },
   { to: '/admin/configuracoes', label: 'Configurações', icon: Settings2 },
 ]
 
@@ -22,6 +26,7 @@ const platformItems = [
   { to: '/platform', label: 'Visão geral', icon: LayoutDashboard, end: true },
   { to: '/platform/empresas', label: 'Empresas', icon: Building2 },
   { to: '/platform/chaves', label: 'Chaves de cadastro', icon: KeyRound },
+  { to: '/platform/feedback', label: 'Feedback', icon: MessageSquare },
 ]
 
 export function AppShell({ context }: { context: 'company' | 'platform' }) {
@@ -44,9 +49,9 @@ export function AppShell({ context }: { context: 'company' | 'platform' }) {
     return <main className="grid min-h-screen place-items-center bg-[#f7faff] p-5 text-[#071044]"><section className="panel max-w-lg text-left"><Brand /><h1 className="mt-8 text-2xl font-semibold">Empresa temporariamente suspensa</h1><p className="muted mt-3 text-sm leading-6">Os dados permanecem preservados, mas as funções operacionais estão indisponíveis até a reativação pela plataforma.</p>{platformConfig.data?.support_email && <p className="mt-4 text-sm">Suporte: <a className="text-[#087cf0] underline" href={`mailto:${platformConfig.data.support_email}`}>{platformConfig.data.support_email}</a></p>}<Button className="mt-7" variant="secondary" onClick={() => void logout()}><LogOut className="size-4" /> Sair</Button></section></main>
   }
   return <div className="internal-shell min-h-screen bg-[#f7faff] text-[#071044]">
-    <header className="sticky top-0 z-30 flex h-20 items-center justify-between border-b border-[#d8e5f4] bg-white/95 px-4 backdrop-blur md:hidden">
+    <header className="sticky top-0 z-30 flex h-20 items-center justify-center border-b border-[#d8e5f4] bg-white/95 px-4 backdrop-blur md:hidden">
       <Brand />
-      <button className="btn btn-ghost !size-11 !min-h-0 !p-0" onClick={() => setOpen((value) => !value)} aria-label={open ? 'Fechar menu' : 'Abrir menu'} aria-expanded={open}>
+      <button className="btn btn-ghost absolute right-4 !size-11 !min-h-0 !p-0" onClick={() => setOpen((value) => !value)} aria-label={open ? 'Fechar menu' : 'Abrir menu'} aria-expanded={open}>
         {open ? <X className="size-5" /> : <Menu className="size-5" />}
       </button>
     </header>
@@ -71,5 +76,5 @@ export function AppShell({ context }: { context: 'company' | 'platform' }) {
 }
 
 export function Brand() {
-  return <span className="inline-flex"><img src={logo} alt="OpticNoteBook" className="h-10 w-auto object-contain" /></span>
+  return <span className="inline-flex"><img src={logo} alt="NoteSync" className="h-10 w-auto object-contain" /></span>
 }

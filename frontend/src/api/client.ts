@@ -18,6 +18,10 @@ export class ApiError extends Error {
   }
 }
 
+export class UserFacingError extends Error {
+  name = 'UserFacingError'
+}
+
 function messageForStatus(status: number) {
   const messages: Record<number, string> = {
     400: 'Revise os dados informados.',
@@ -94,16 +98,21 @@ async function rawRequest<T>(path: string, options: RequestOptions = {}): Promis
 
   let response: Response
   const controller = new AbortController()
+  const abort = () => controller.abort()
+  if (requestInit.signal?.aborted) abort()
+  requestInit.signal?.addEventListener('abort', abort, { once: true })
   const timeout = window.setTimeout(() => controller.abort(), 15_000)
   try {
     response = await fetch(`${API_BASE_URL}${path}`, { ...requestInit, body, headers, credentials: 'include', signal: controller.signal })
   } catch (error) {
+    if (requestInit.signal?.aborted) throw error
     if (error instanceof DOMException && error.name === 'AbortError') {
       throw new ApiError(0, null, 'A solicitação demorou demais. Tente novamente.')
     }
     throw new ApiError(0, null, 'Não foi possível conectar ao servidor. Tente novamente.')
   } finally {
     window.clearTimeout(timeout)
+    requestInit.signal?.removeEventListener('abort', abort)
   }
 
   if (response.status === 401 && retryAuth !== false && !path.startsWith('/auth/')) {
@@ -139,7 +148,16 @@ export function setSessionLostHandler(handler: (() => void) | null) {
 }
 
 export const api = {
-  get: <T>(path: string) => rawRequest<T>(path),
+  get: <T>(path: string, options: Pick<RequestInit, 'signal'> = {}) => rawRequest<T>(path, options),
+  download: async (path: string) => {
+    let response = await fetch(`${API_BASE_URL}${path}`, { headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {}, credentials: 'include' })
+    if (response.status === 401) {
+      await refreshAccess()
+      response = await fetch(`${API_BASE_URL}${path}`, { headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {}, credentials: 'include' })
+    }
+    if (!response.ok) throw new ApiError(response.status, null)
+    return response.blob()
+  },
   post: <T>(path: string, body: unknown = {}) => rawRequest<T>(path, { method: 'POST', body }),
   patch: <T>(path: string, body: unknown) => rawRequest<T>(path, { method: 'PATCH', body }),
   put: <T>(path: string, body: unknown) => rawRequest<T>(path, { method: 'PUT', body }),
@@ -162,6 +180,7 @@ export const api = {
 }
 
 export function apiErrorMessage(error: unknown) {
+  if (error instanceof UserFacingError) return error.message
   if (!(error instanceof ApiError)) return 'Ocorreu um erro inesperado.'
   const payload = error.details as { errors?: unknown } | null
   const errors = payload?.errors
@@ -182,6 +201,7 @@ export function apiErrorMessage(error: unknown) {
     email_unchanged: 'Informe um e-mail diferente do atual.',
   }
   if (code && securityMessages[code]) return securityMessages[code]
+  if (error.status >= 500) return error.message
   if (errors && typeof errors === 'object' && 'message' in errors) {
     const message = firstErrorMessage((errors as { message?: unknown }).message)
     if (message) return translateApiMessage(message)
@@ -228,6 +248,7 @@ function firstErrorMessage(value: unknown): string | null {
 
 function translateApiMessage(message: string) {
   const normalized = message.toLocaleLowerCase('en-US')
+  if (/\b(?:typeerror|integrityerror|traceback|failed to fetch|http\s*\d{3})\b/i.test(message)) return 'Não foi possível concluir. Tente novamente.'
   if (normalized.includes('no active account found') || normalized.includes('given credentials') || normalized.includes('invalid credentials') || normalized.includes('credenciais inválidas') || normalized.includes('conta ativa encontrada')) return 'E-mail ou senha incorretos.'
   if (normalized.includes('company is suspended') || normalized.includes('conta está suspensa')) return 'Esta conta está suspensa.'
   if (normalized.includes('already exists') || normalized.includes('already registered') || normalized.includes('já está cadastrado')) return 'Este e-mail já está cadastrado.'

@@ -1,4 +1,4 @@
-# OpticNoteBook — revisão de segurança
+# NoteSync — revisão de segurança
 
 Data: 18/09/2026
 

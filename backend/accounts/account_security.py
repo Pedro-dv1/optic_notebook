@@ -32,13 +32,14 @@ def _identity_digest(value):
     return salted_hmac("account-security-rate-limit", value, algorithm="sha256").hexdigest()
 
 
-def enforce_security_rate_limit(user, request, endpoint, purpose="", *, limit=5, window_seconds=600):
+def enforce_security_rate_limit(user, request, endpoint, purpose="", *, limit=5, window_seconds=600, identity="anonymous"):
     # ASVS V2.4: PostgreSQL-backed user and IP buckets work across app workers.
     now = timezone.now()
     epoch = int(now.timestamp())
     window_start = datetime.fromtimestamp(epoch - (epoch % window_seconds), tz=UTC)
     ip = request.META.get("REMOTE_ADDR", "unknown") if request else "unknown"
-    buckets = ((_identity_digest(f"user:{user.pk}"), limit), (_identity_digest(f"ip:{ip}"), limit * 4))
+    key = f"user:{user.pk}" if user else f"recovery:{identity}"
+    buckets = ((_identity_digest(key), limit), (_identity_digest(f"ip:{ip}"), limit * 4))
     wait = window_seconds - (epoch % window_seconds)
     with transaction.atomic():
         for key_digest, bucket_limit in buckets:

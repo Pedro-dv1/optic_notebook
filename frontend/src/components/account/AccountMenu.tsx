@@ -1,4 +1,4 @@
-import { LuLockKeyhole as LockKeyhole, LuLogOut as LogOut, LuSettings2 as Settings2, LuUserRound as UserRound } from 'react-icons/lu'
+import { LuHeart as Heart, LuLockKeyhole as LockKeyhole, LuLogOut as LogOut, LuSettings2 as Settings2, LuUserRound as UserRound } from 'react-icons/lu'
 import type { IconType } from 'react-icons'
 import { useCallback, useEffect, useRef, useState, type ButtonHTMLAttributes, type KeyboardEvent } from 'react'
 import { useNavigate } from 'react-router'
@@ -9,14 +9,17 @@ import { EmailChangeFlow } from './EmailChangeFlow'
 import { PasswordChangeFlow } from './PasswordChangeFlow'
 import { ProfilePanel } from './ProfileDialog'
 import { PasswordSettings, SecuritySettings, SettingsHome } from './SettingsDialog'
+import { AccountDeletionPanel } from './AccountDeletion'
+import { CustomerFavorites } from '../CustomerFavorites'
+import { NotificationSettings } from './NotificationSettings'
 
-type AccountView = 'profile' | 'email' | 'settings' | 'security' | 'password' | 'password-change' | null
+type AccountView = 'profile' | 'email' | 'settings' | 'favorites' | 'notifications' | 'security' | 'password' | 'password-change' | 'delete' | null
 
-export function AccountMenu() {
+export function AccountMenu({ page = false }: { page?: boolean }) {
   const navigate = useNavigate()
   const { user, logout, clearSession } = useAuth()
   const [open, setOpen] = useState(false)
-  const [view, setView] = useState<AccountView>(null)
+  const [view, setView] = useState<AccountView>(page && window.matchMedia('(min-width: 768px)').matches ? 'profile' : null)
   const [passwordChanged, setPasswordChanged] = useState(false)
   const [leaving, setLeaving] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -82,25 +85,61 @@ export function AccountMenu() {
     else setView(null)
   }, [finishPasswordChange, passwordChanged])
 
-  const settingsView = view === 'settings' || view === 'security' || view === 'password' || view === 'password-change'
+  const settingsView = view === 'settings' || view === 'favorites' || view === 'notifications' || view === 'security' || view === 'password' || view === 'password-change' || view === 'delete'
   const title = view === 'profile' ? 'Perfil'
+    : view === 'favorites' ? 'Favoritos'
+    : view === 'notifications' ? 'Mensagens e lembretes'
+    : view === 'delete' ? 'Excluir minha conta'
     : view === 'email' ? 'Alterar e-mail'
       : view === 'security' ? 'Segurança'
         : view === 'password' ? 'Senha'
           : view === 'password-change' ? 'Alterar senha'
             : 'Configurações'
   const onBack = view === 'email' ? () => setView('profile')
+    : view === 'favorites' ? () => setView('settings')
+    : view === 'notifications' ? () => setView('settings')
+    : view === 'delete' ? () => setView('security')
     : view === 'security' ? () => setView('settings')
       : view === 'password' ? () => setView('security')
         : view === 'password-change' && !passwordChanged ? () => setView('password')
           : undefined
   const backLabel = view === 'email' ? 'Perfil'
+    : view === 'favorites' ? 'Configurações'
+    : view === 'notifications' ? 'Configurações'
+    : view === 'delete' ? 'Segurança'
     : view === 'security' ? 'Configurações'
       : view === 'password' ? 'Segurança'
         : view === 'password-change' ? 'Senha'
           : undefined
 
   if (!user) return null
+
+  const content = <>
+      {view === 'profile' && <ProfilePanel onEmailChange={() => setView('email')} />}
+      {view === 'email' && <EmailChangeFlow onDone={() => setView('profile')} />}
+      {view === 'settings' && <SettingsHome onSecurity={() => setView('security')} onFavorites={() => setView('favorites')} onNotifications={() => setView('notifications')} />}
+      {view === 'favorites' && <CustomerFavorites />}
+      {view === 'notifications' && <NotificationSettings />}
+      {view === 'security' && <SecuritySettings onPassword={() => setView('password')} onDelete={() => setView('delete')} />}
+      {view === 'delete' && <AccountDeletionPanel />}
+      {view === 'password' && <PasswordSettings onPasswordChange={() => setView('password-change')} />}
+      {view === 'password-change' && <PasswordChangeFlow onSuccess={() => setPasswordChanged(true)} onDone={finishPasswordChange} />}
+  </>
+  if (page) return <section aria-label="Conta e configurações">
+    <header className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-[#dfe8f3] pb-5">
+      <h1 className="public-display text-3xl">{view ? title : 'Minha conta'}</h1>
+      {view && <button type="button" className="btn btn-ghost md:hidden" onClick={onBack || (() => setView(null))}>Voltar</button>}
+      {onBack && <button type="button" className="btn btn-ghost hidden md:inline-flex" onClick={onBack}>Voltar para {backLabel}</button>}
+    </header>
+    <div className="grid gap-6 md:grid-cols-[12rem_minmax(0,1fr)]">
+      <nav aria-label="Configurações da conta" className={`content-start gap-2 ${view ? 'hidden md:grid' : 'grid'}`}>
+        <AccountNavButton active={view === 'profile' || view === 'email'} icon={UserRound} onClick={() => setView('profile')}>Perfil</AccountNavButton>
+        <AccountNavButton active={settingsView} icon={Settings2} onClick={() => setView('settings')}>Configurações</AccountNavButton>
+        <AccountNavButton icon={LogOut} disabled={leaving} onClick={() => void leave()}>{leaving ? 'Saindo…' : 'Sair'}</AccountNavButton>
+      </nav>
+      {view && <div className="min-w-0 rounded-2xl border border-[#d8e5f4] bg-white p-4 sm:p-6">{content}</div>}
+    </div>
+  </section>
 
   return <>
     <div ref={rootRef} className="relative shrink-0">
@@ -141,15 +180,10 @@ export function AccountMenu() {
       backLabel={backLabel}
       returnFocusRef={buttonRef}
       sidebar={settingsView
-        ? <AccountNavButton active={view !== 'settings'} icon={LockKeyhole} onClick={() => setView('security')}>Segurança</AccountNavButton>
+        ? <><AccountNavButton active={view === 'security' || view === 'password' || view === 'password-change' || view === 'delete'} icon={LockKeyhole} onClick={() => setView('security')}>Segurança</AccountNavButton><AccountNavButton active={view === 'favorites'} icon={Heart} onClick={() => setView('favorites')}>Favoritos</AccountNavButton></>
         : <AccountNavButton active icon={UserRound} onClick={() => setView('profile')}>Perfil</AccountNavButton>}
     >
-      {view === 'profile' && <ProfilePanel onEmailChange={() => setView('email')} />}
-      {view === 'email' && <EmailChangeFlow onDone={() => setView('profile')} />}
-      {view === 'settings' && <SettingsHome onSecurity={() => setView('security')} />}
-      {view === 'security' && <SecuritySettings onPassword={() => setView('password')} />}
-      {view === 'password' && <PasswordSettings onPasswordChange={() => setView('password-change')} />}
-      {view === 'password-change' && <PasswordChangeFlow onSuccess={() => setPasswordChanged(true)} onDone={finishPasswordChange} />}
+      {content}
     </AccountModalShell>}
   </>
 }

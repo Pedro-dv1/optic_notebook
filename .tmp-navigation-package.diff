@@ -1,0 +1,855 @@
+--- backend\accounts\account_security.py
++++ backend\accounts\account_security.py
+@@ -32,13 +32,14 @@
+     return salted_hmac("account-security-rate-limit", value, algorithm="sha256").hexdigest()
+ 
+ 
+-def enforce_security_rate_limit(user, request, endpoint, purpose="", *, limit=5, window_seconds=600):
++def enforce_security_rate_limit(user, request, endpoint, purpose="", *, limit=5, window_seconds=600, identity="anonymous"):
+     # ASVS V2.4: PostgreSQL-backed user and IP buckets work across app workers.
+     now = timezone.now()
+     epoch = int(now.timestamp())
+     window_start = datetime.fromtimestamp(epoch - (epoch % window_seconds), tz=UTC)
+     ip = request.META.get("REMOTE_ADDR", "unknown") if request else "unknown"
+-    buckets = ((_identity_digest(f"user:{user.pk}"), limit), (_identity_digest(f"ip:{ip}"), limit * 4))
++    key = f"user:{user.pk}" if user else f"recovery:{identity}"
++    buckets = ((_identity_digest(key), limit), (_identity_digest(f"ip:{ip}"), limit * 4))
+     wait = window_seconds - (epoch % window_seconds)
+     with transaction.atomic():
+         for key_digest, bucket_limit in buckets:
+--- backend\accounts\models.py
++++ backend\accounts\models.py
+@@ -21,6 +21,7 @@
+     whatsapp = models.CharField(max_length=20, blank=True)
+     avatar = models.ImageField(upload_to=customer_avatar_path, null=True, blank=True)
+     auth_version = models.PositiveIntegerField(default=0, editable=False)
++    notification_preference = models.BooleanField(null=True, blank=True, default=None)
+ 
+     USERNAME_FIELD = "email"
+     REQUIRED_FIELDS = ["full_name"]
+--- backend\accounts\serializers.py
++++ backend\accounts\serializers.py
+@@ -19,7 +19,7 @@
+ 
+     class Meta:
+         model = User
+-        fields = ("id", "email", "full_name", "whatsapp", "avatar", "is_superuser", "company", "professional", "role")
++        fields = ("id", "email", "full_name", "whatsapp", "avatar", "notification_preference", "is_superuser", "company", "professional", "role")
+         read_only_fields = ("id", "email", "is_superuser", "company", "professional", "role")
+ 
+     def get_company(self, obj):
+@@ -58,10 +58,11 @@
+ class CustomerProfileSerializer(serializers.ModelSerializer):
+     avatar = serializers.FileField(required=False, allow_null=True)
+     full_name = serializers.CharField(min_length=2, max_length=150)
++    notification_preference = serializers.BooleanField(required=False, allow_null=True)
+ 
+     class Meta:
+         model = User
+-        fields = ("id", "email", "full_name", "whatsapp", "avatar")
++        fields = ("id", "email", "full_name", "whatsapp", "avatar", "notification_preference")
+         read_only_fields = ("id", "email")
+ 
+     def validate_full_name(self, value):
+@@ -90,7 +91,7 @@
+ 
+ 
+ class AccountActionRequestSerializer(serializers.Serializer):
+-    pass
++    email = serializers.EmailField(required=False, max_length=254)
+ 
+ 
+ class AuthorizationSerializer(serializers.Serializer):
+@@ -104,7 +105,7 @@
+     def validate(self, attrs):
+         if attrs["new_password"] != attrs["new_password_confirm"]:
+             raise serializers.ValidationError({"new_password_confirm": "As novas senhas não coincidem."})
+-        user = self.context["request"].user
++        user = self.context.get("password_user", self.context["request"].user)
+         if user.check_password(attrs["new_password"]):
+             raise serializers.ValidationError({"new_password": "A nova senha deve ser diferente da senha atual."})
+         validate_password(attrs["new_password"], user)
+--- backend\bookings\notifications.py
++++ backend\bookings\notifications.py
+@@ -35,6 +35,8 @@
+ 
+ 
+ def _send(event):
++    if event.appointment.customer_id and event.appointment.customer.notification_preference is False:
++        return 0
+     from pywebpush import WebPushException, webpush
+ 
+     links = list(event.appointment.push_links.select_related("subscription").filter(subscription__active=True))
+@@ -80,7 +82,7 @@
+     while processed < limit:
+         with transaction.atomic():
+             event = NotificationEvent.objects.select_for_update(skip_locked=True).select_related(
+-                "appointment__company"
++                "appointment__company", "appointment__customer"
+             ).filter(state=NotificationEvent.State.PENDING, scheduled_for__lte=timezone.now()).order_by("scheduled_for").first()
+             if not event:
+                 break
+--- backend\bookings\operations.py
++++ backend\bookings\operations.py
+@@ -186,6 +186,14 @@
+                 **customer_data,
+             )
+             management_secret = AppointmentManagementCredential.issue(appointment)
++            if customer and customer.notification_preference is True:
++                from .models import BookingPushSubscription
++
++                # ASVS V8.2: link only devices owned by this appointment's customer.
++                BookingPushSubscription.objects.bulk_create([
++                    BookingPushSubscription(appointment=appointment, subscription=subscription)
++                    for subscription in customer.push_subscriptions.filter(active=True)
++                ], ignore_conflicts=True)
+             from .models import NotificationEvent
+ 
+             NotificationEvent.objects.get_or_create(
+--- backend\bookings\views.py
++++ backend\bookings\views.py
+@@ -539,6 +539,8 @@
+         serializer.is_valid(raise_exception=True)
+         values = serializer.validated_data
+         user = request.user if request.user.is_authenticated else None
++        if user and user.notification_preference is False:
++            raise ValidationError("As notificações estão desativadas nas configurações da conta.")
+         if user:
+             appointment = Appointment.objects.filter(pk=values["appointment"], customer=user).first()
+         else:
+--- backend\customers\views.py
++++ backend\customers\views.py
+@@ -6,6 +6,10 @@
+ from bookings.models import Appointment
+ from .models import CompanyFavorite, FavoriteSuggestionDismissal
+ from rest_framework.permissions import AllowAny
++from rest_framework.exceptions import NotAuthenticated
++from django.conf import settings
++from django.utils import timezone
++import uuid
+ from rest_framework.response import Response
+ from django.utils.decorators import method_decorator
+ from django.views.decorators.csrf import csrf_protect
+@@ -16,8 +20,12 @@
+     request_new_email_otp,
+     request_otp,
+     verify_identity_otp,
++    enforce_security_rate_limit,
++    mask_email,
++    _digest,
+ )
+-from accounts.models import AccountVerificationChallenge
++from accounts.models import AccountActionAuthorization, AccountVerificationChallenge, User
++from platform_core.exceptions import SecurityFlowError
+ from platform_core.throttles import WindowScopedRateThrottle
+ from platform_core.permissions import IsCustomer
+ 
+@@ -105,15 +113,46 @@
+         return self.request.user
+ 
+ 
+-class CustomerPasswordChangeView(generics.GenericAPIView):
+-    permission_classes = (IsCustomer,)
++class PasswordFlowView(generics.GenericAPIView):
++    """The same password flow supports the account and recovery entry points."""
++
++    def get_permissions(self):
++        return [IsCustomer() if self.request.user.is_authenticated else AllowAny()]
++
++    def recovery_limit(self, endpoint, identity="anonymous", limit=5):
++        if not self.request.user.is_authenticated:
++            if identity == "anonymous":
++                identity = self.request.META.get("REMOTE_ADDR", "unknown")
++            enforce_security_rate_limit(None, self.request, endpoint, "PASSWORD_CHANGE", identity=identity, limit=limit)
++
++    def password_user(self, queryset):
++        # ASVS V6.4/V8.2: anonymous callers prove ownership through the existing OTP/authorization.
++        if self.request.user.is_authenticated:
++            return self.request.user
++        record = queryset.select_related("user").filter(user__is_active=True).first()
++        return record.user if record else None
++
++
++@method_decorator(csrf_protect, name="dispatch")
++class CustomerPasswordChangeView(PasswordFlowView):
+     serializer_class = CustomerPasswordChangeSerializer
+ 
+     def post(self, request):
+-        serializer = self.get_serializer(data=request.data)
++        self.recovery_limit("password_recovery_confirm")
++        from accounts.serializers import AuthorizationSerializer
++        authorization = AuthorizationSerializer(data=request.data)
++        authorization.is_valid(raise_exception=True)
++        user = self.password_user(AccountActionAuthorization.objects.filter(
++            token_digest=_digest(authorization.validated_data["authorization_token"]),
++            purpose=AccountActionAuthorization.Purpose.PASSWORD_CHANGE,
++        ))
++        if not user:
++            raise SecurityFlowError("authorization_invalid", "A verificação não é válida. Inicie novamente.")
++        serializer = self.get_serializer(data=request.data)
++        serializer.context["password_user"] = user
+         serializer.is_valid(raise_exception=True)
+         confirm_password_change(
+-            request.user,
++            user,
+             request,
+             serializer.validated_data["authorization_token"],
+             serializer.validated_data["new_password"],
+@@ -121,31 +160,66 @@
+         return Response(status=status.HTTP_204_NO_CONTENT)
+ 
+ 
+-class PasswordOtpRequestView(generics.GenericAPIView):
+-    permission_classes = (IsCustomer,)
++@method_decorator(csrf_protect, name="dispatch")
++class PasswordOtpRequestView(PasswordFlowView):
+     serializer_class = AccountActionRequestSerializer
+ 
+     def post(self, request):
+         serializer = self.get_serializer(data=request.data)
+         serializer.is_valid(raise_exception=True)
++        if request.user.is_authenticated:
++            user = request.user
++        else:
++            email = serializer.validated_data.get("email", "").strip().lower()
++            if not email:
++                raise NotAuthenticated()
++            self.recovery_limit("password_recovery_request", email)
++            user = User.objects.filter(email=email, is_active=True).first()
++            # OWASP Forgot Password: identical response shape for unknown addresses.
++            data = {
++                "challenge_id": uuid.uuid4(), "masked_email": mask_email(email),
++                "expires_in": int(settings.ACCOUNT_OTP_TTL.total_seconds()),
++                "resend_after": settings.ACCOUNT_OTP_RESEND_SECONDS,
++            }
++            if not user:
++                return Response(data, status=status.HTTP_201_CREATED)
++            try:
++                data = request_otp(user, request, AccountVerificationChallenge.Purpose.PASSWORD_CHANGE, user.email)
++            except SecurityFlowError as error:
++                if str(error.detail["code"]) not in ("resend_cooldown", "rate_limited"):
++                    raise
++                previous = AccountVerificationChallenge.objects.filter(
++                    user=user, purpose=AccountVerificationChallenge.Purpose.PASSWORD_CHANGE,
++                    consumed_at__isnull=True, sent_at__isnull=False, expires_at__gt=timezone.now(),
++                ).first()
++                if previous:
++                    data["challenge_id"] = previous.id
++            return Response(data, status=status.HTTP_201_CREATED)
+         data = request_otp(
+-            request.user,
++            user,
+             request,
+             AccountVerificationChallenge.Purpose.PASSWORD_CHANGE,
+-            request.user.email,
++            user.email,
+         )
+         return Response(data, status=status.HTTP_201_CREATED)
+ 
+ 
+-class PasswordOtpVerifyView(generics.GenericAPIView):
+-    permission_classes = (IsCustomer,)
++@method_decorator(csrf_protect, name="dispatch")
++class PasswordOtpVerifyView(PasswordFlowView):
+     serializer_class = OtpVerificationSerializer
+ 
+     def post(self, request):
+-        serializer = self.get_serializer(data=request.data)
+-        serializer.is_valid(raise_exception=True)
++        self.recovery_limit("password_recovery_verify", limit=15)
++        serializer = self.get_serializer(data=request.data)
++        serializer.is_valid(raise_exception=True)
++        user = self.password_user(AccountVerificationChallenge.objects.filter(
++            pk=serializer.validated_data["challenge_id"],
++            purpose=AccountVerificationChallenge.Purpose.PASSWORD_CHANGE,
++        ))
++        if not user:
++            raise SecurityFlowError("otp_invalid", "Esse código não é válido.")
+         data = verify_identity_otp(
+-            request.user,
++            user,
+             request,
+             AccountVerificationChallenge.Purpose.PASSWORD_CHANGE,
+             serializer.validated_data["challenge_id"],
+--- frontend\src\app\App.tsx
++++ frontend\src\app\App.tsx
+@@ -12,6 +12,7 @@
+ const CustomerRegisterPage = lazy(() => import('../pages/CustomerRegisterPage'))
+ const CompanyRegisterPage = lazy(() => import('../pages/CompanyRegisterPage'))
+ const CustomerAccountPage = lazy(() => import('../pages/CustomerAccountPage'))
++const CustomerProfilePage = lazy(() => import('../pages/CustomerProfilePage'))
+ const PublicBookingPage = lazy(() => import('../pages/PublicBookingPage'))
+ const TermsPage = lazy(() => import('../pages/TermsPage'))
+ const PrivacyPage = lazy(() => import('../pages/PrivacyPage'))
+@@ -60,7 +61,7 @@
+         <Route element={<ProtectedRoute role="customer" />}>
+           <Route path="/cliente" element={<CustomerAccountPage />} />
+           <Route path="/cliente/agendamentos" element={<Navigate to="/cliente" replace />} />
+-          <Route path="/cliente/conta" element={<Navigate to="/cliente" replace />} />
++          <Route path="/cliente/conta" element={<CustomerProfilePage />} />
+         </Route>
+         <Route element={<ProtectedRoute role="platform" />}>
+           <Route path="/platform" element={<AppShell context="platform" />}>
+@@ -112,7 +113,7 @@
+       '/cliente/login': 'Entrar | NoteSync',
+       '/cliente/cadastro': 'Criar conta | NoteSync',
+       '/cliente/agendamentos': 'Meus agendamentos | NoteSync',
+-      '/cliente/conta': 'Meus agendamentos | NoteSync',
++      '/cliente/conta': 'Perfil | NoteSync',
+       '/empreendedor/login': 'Entrar | NoteSync',
+       '/empreendedor/cadastro': 'Criar conta empresarial | NoteSync',
+       '/platform/login': 'Entrar | NoteSync',
+--- frontend\src\components\BookingDatePicker.tsx
++++ frontend\src\components\BookingDatePicker.tsx
+@@ -3,7 +3,7 @@
+ import { LuChevronLeft, LuChevronRight } from 'react-icons/lu'
+ import { api, apiErrorMessage } from '../api/client'
+ import { localDateInput } from '../lib/format'
+-import { Button, Field, Notice } from './ui'
++import { Button, Notice } from './ui'
+ 
+ export function BookingDatePicker({ slug, service, professional, unit, value, onChange }: {
+   slug: string; service: string; professional: string; unit?: string | null; value: string; onChange: (date: string) => void
+@@ -27,15 +27,11 @@
+     onChange('')
+     if (scrollRef.current) scrollRef.current.scrollLeft = 0
+   }
+-  const select = (date: string) => {
+-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < today) return
+-    setMonth(date.slice(0, 7)); onChange(date)
+-  }
+   return <section aria-label="Escolha da data">
+     <div className="mb-3 flex items-center justify-between gap-2">
+-      <Button type="button" variant="secondary" aria-label="Mês anterior" disabled={month <= today.slice(0, 7)} onClick={() => navigate(-1)}><LuChevronLeft aria-hidden="true" /></Button>
++      <button className="calendar-month-nav" type="button" aria-label="Mês anterior" disabled={month <= today.slice(0, 7)} onClick={() => navigate(-1)}><LuChevronLeft aria-hidden="true" /></button>
+       <h3 className="text-center font-semibold capitalize" aria-live="polite">{first.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}</h3>
+-      <Button type="button" variant="secondary" aria-label="Próximo mês" onClick={() => navigate(1)}><LuChevronRight aria-hidden="true" /></Button>
++      <button className="calendar-month-nav" type="button" aria-label="Próximo mês" onClick={() => navigate(1)}><LuChevronRight aria-hidden="true" /></button>
+     </div>
+     <div className="flex min-w-0 items-center gap-2">
+       <Button className="hidden !px-2 sm:inline-flex" type="button" variant="ghost" aria-label="Rolar dias para a esquerda" onClick={() => scrollRef.current?.scrollBy({ left: -280, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })}><LuChevronLeft aria-hidden="true" /></Button>
+@@ -52,7 +48,6 @@
+     {available.isFetching && <p className="text-sm text-[#52658f]" role="status">Consultando dias disponíveis…</p>}
+     {available.isError && <Notice>{apiErrorMessage(available.error)}</Notice>}
+     {available.data?.available_dates.length === 0 && <p className="mt-2 text-sm text-[#52658f]">Nenhum dia disponível neste mês. Tente o próximo.</p>}
+-    <details className="mt-3 text-sm text-[#43557e]"><summary className="cursor-pointer py-2">Ir diretamente para uma data</summary><div className="mt-2 max-w-xs"><Field label="Data" type="date" min={today} value={value} onChange={(event) => select(event.target.value)} /></div></details>
+     <p className="mt-3 text-xs text-[#52658f]">Horários no fuso de Brasília.</p>
+   </section>
+ }
+--- frontend\src\components\CustomerCalendar.tsx
++++ frontend\src\components\CustomerCalendar.tsx
+@@ -23,22 +23,22 @@
+     const date = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth()+offset, 1, 12))
+     setMonth(date.toISOString().slice(0, 7))
+   }
+-  const byDay = new Map<string, Appointment[]>()
+-  for (const event of query.data?.events || []) {
+-    const day = localDateInput(new Date(event.starts_at))
+-    byDay.set(day, [...(byDay.get(day) || []), event])
+-  }
+   const counts = new Map(query.data?.days.map((day) => [day.date, day.count]) || [])
+   return <section aria-label="Calendário de agendamentos">
+     <header className="mb-5 flex items-center justify-between gap-2"><button type="button" className="calendar-month-nav" aria-label="Mês anterior" onClick={() => navigate(-1)}><LuChevronLeft className="size-5" aria-hidden="true" /></button><h2 className="text-center text-xl font-bold capitalize" aria-live="polite">{first.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric', timeZone: 'UTC' })}</h2><button type="button" className="calendar-month-nav" aria-label="Próximo mês" onClick={() => navigate(1)}><LuChevronRight className="size-5" aria-hidden="true" /></button></header>
+     {query.isPending && <LoadingState label="Carregando calendário" />}{query.isError && <Notice>{apiErrorMessage(query.error)}</Notice>}
+-    {query.data && <><p className="mb-3 text-sm text-[#43557e]">Horários de Brasília. Selecione um dia ou evento para ver os detalhes.</p><div className="calendar-grid grid grid-cols-7 gap-px overflow-hidden rounded-xl border border-[#cbdcf0] bg-[#cbdcf0]">{['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'].map((day) => <div key={day} className="bg-[#edf5ff] py-2 text-center text-xs font-semibold">{day}</div>)}{Array.from({ length: cells }, (_, index) => {
++    {query.data && <><p className="mb-3 text-sm text-[#43557e]">Horários de Brasília. Selecione um dia para ver seus agendamentos.</p><div className="calendar-grid grid grid-cols-7 gap-px overflow-hidden rounded-xl border border-[#cbdcf0] bg-[#cbdcf0]">{['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'].map((day) => <div key={day} className="bg-[#edf5ff] py-2 text-center text-xs font-semibold">{day}</div>)}{Array.from({ length: cells }, (_, index) => {
+       const date = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth(), index-leadingDays+1, 12))
+       const day = date.toISOString().slice(0, 10)
+       const outside = !day.startsWith(month)
+-      const events = byDay.get(day) || []
+       const total = counts.get(day) || 0
+-      return <div key={day} className={`min-w-0 p-1 sm:min-h-32 sm:p-2 ${outside ? 'bg-[#f7faff]' : 'bg-white'}`}><Button variant="ghost" className={`calendar-day w-full flex-col !min-h-11 !gap-0 !p-1 sm:w-auto sm:flex-row ${outside ? 'text-[#617085]' : ''}`} aria-current={day === today ? 'date' : undefined} aria-label={`${date.toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' })}${outside ? ', fora do mês exibido' : `, ${total} agendamentos`}${day === today ? ', hoje' : ''}`} onClick={() => { if (outside) setMonth(day.slice(0, 7)); setSelectedDay(day); setPage(1) }}>{date.getUTCDate()}{total > 0 && <span className="rounded-full bg-[#e8f3ff] px-1 text-xs text-[#164a8a] sm:hidden">{total > 9 ? '9+' : total}</span>}</Button><div className="hidden space-y-1 sm:block">{events.map((event) => <button key={event.id} className="calendar-event block w-full rounded border border-[#b9d0eb] bg-[#f6faff] p-1 text-left text-xs leading-5 hover:border-[#164a8a]" onClick={() => onDetails(event)} aria-label={`${event.company_name}, ${event.service_name}, ${formatTime(event.starts_at)}`}><strong className="block truncate">{formatTime(event.starts_at)} · {event.company_name}</strong><span className="block truncate">{event.service_name}</span><StatusBadge status={event.status} outcome={event.outcome} /></button>)}{total > events.length && <Button variant="ghost" className="w-full !min-h-11 !px-1 !text-xs" onClick={() => { setSelectedDay(day); setPage(1) }}>Mais {total-events.length}</Button>}</div></div>
++      return <div key={day} className={`calendar-cell min-w-0 p-1 sm:p-2 ${outside ? 'bg-[#f7faff]' : 'bg-white'}`}>
++        <button type="button" className={`calendar-day ${outside ? 'text-[#617085]' : ''}`} aria-current={day === today ? 'date' : undefined}
++          aria-label={`${date.toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' })}${outside ? ', fora do mês exibido' : `, ${total} agendamentos`}${day === today ? ', hoje' : ''}`}
++          onClick={() => { if (outside) setMonth(day.slice(0, 7)); setSelectedDay(day); setPage(1) }}>
++          <span>{date.getUTCDate()}</span>{total > 0 && <span className="calendar-count-badge" aria-hidden="true">{total}</span>}
++        </button>
++      </div>
+     })}</div>{!query.data.days.length && <p className="mt-4 text-sm text-[#43557e]">Você não tem agendamentos neste mês.</p>}</>}
+     <Dialog open={Boolean(selectedDay)} title={`Agendamentos em ${selectedDay.split('-').reverse().join('/')}`} onClose={() => setSelectedDay('')}>
+       {dayQuery.isPending && <LoadingState />}{dayQuery.isError && <Notice>{apiErrorMessage(dayQuery.error)}</Notice>}{dayQuery.data?.results.length === 0 && <EmptyState title="Dia livre" description="Nenhum agendamento nesta data." />}<ul className="grid gap-3">{dayQuery.data?.results.map((event) => <li key={event.id}><Button variant="secondary" className="w-full flex-col items-start text-left" onClick={() => { setSelectedDay(''); onDetails(event) }}>{formatTime(event.starts_at)} · {event.company_name}<span className="text-xs">{event.service_name} · {event.professional_name}{event.unit_name ? ` · ${event.unit_name}` : ''}</span><StatusBadge status={event.status} outcome={event.outcome} /></Button></li>)}</ul>{dayQuery.data && (dayQuery.data.previous || dayQuery.data.next) && <nav className="mt-4 flex justify-between" aria-label="Eventos do dia"><Button variant="secondary" disabled={!dayQuery.data.previous} onClick={() => setPage(page-1)}>Anterior</Button><Button variant="secondary" disabled={!dayQuery.data.next} onClick={() => setPage(page+1)}>Próxima</Button></nav>}
+--- frontend\src\components\PublicLayout.tsx
++++ frontend\src\components\PublicLayout.tsx
+@@ -6,6 +6,7 @@
+ import { PublicFooter } from './Footer'
+ import { ProfileAvatar } from './ProfileAvatar'
+ import { AccountMenu } from './account/AccountMenu'
++import { CustomerMobileNavigation } from './CustomerMobileNavigation'
+ 
+ export function PublicLogo({ className = '' }: { className?: string }) {
+   return <Link to="/" className={`inline-flex shrink-0 items-center ${className}`} aria-label="NoteSync — início">
+@@ -29,8 +30,8 @@
+   const accountTo = user?.is_superuser ? '/platform' : user?.company ? '/admin' : user?.professional ? '/profissional' : '/cliente'
+   const isCustomer = Boolean(user && !user.is_superuser && !user.company && !user.professional)
+   return <header className="public-header sticky top-0 z-40 backdrop-blur-md">
+-    <div className="mx-auto flex h-20 max-w-[90rem] items-center justify-between gap-3 px-5 sm:h-[5.5rem] sm:gap-6 sm:px-8 lg:px-12">
+-      <PublicLogo />
++    <div className="public-header-content relative mx-auto flex h-20 max-w-[90rem] items-center justify-between gap-3 px-5 sm:h-[5.5rem] sm:gap-6 sm:px-8 lg:px-12">
++      <PublicLogo className="public-header-logo" />
+       <nav className="hidden items-center gap-9 text-[1.02rem] font-medium text-[#6173a5] lg:flex" aria-label="Navegação pública">
+         {!isCustomer && <Link to="/como-funciona" className="public-nav-link">Como funciona</Link>}
+         {user ? <><Link to={isCustomer ? '/cliente' : accountTo}>{isCustomer ? 'Meus agendamentos' : 'Painel'}</Link>{isCustomer ? <AccountMenu /> : <Link to={accountTo} className="header-account-link" aria-label="Abrir minha conta"><ProfileAvatar src={user.avatar} name={user.full_name} className="size-full" /></Link>}</> : mode === 'home' ? <>
+@@ -42,7 +43,7 @@
+           <Link to={registerTo} className="public-primary-link">Criar conta</Link>
+         </>}
+       </nav>
+-      <div className="flex items-center gap-2 lg:hidden">
++      <div className={`public-header-actions items-center gap-2 lg:hidden ${isCustomer || (!user && mode !== 'entrepreneur') ? 'hidden md:flex' : 'flex'}`}>
+         <button type="button" className="btn btn-ghost !size-12 !min-h-0 !p-0" onClick={() => setOpen((value) => !value)} aria-label={open ? 'Fechar menu' : 'Abrir menu'} aria-expanded={open}>
+           {open ? <X className="size-8" /> : <Menu className="size-9" />}
+         </button>
+@@ -67,10 +68,13 @@
+ }
+ 
+ export function PublicPage({ children, mode = 'customer', className = '', decorations = true }: { children: ReactNode; mode?: HeaderMode; className?: string; decorations?: boolean }) {
+-  return <div className={`public-page relative flex min-h-screen flex-col ${className}`}>
++  const { user } = useAuth()
++  const mobileNavigation = mode !== 'entrepreneur' && !(user?.is_superuser || user?.company || user?.professional)
++  return <div className={`public-page relative flex min-h-screen flex-col ${mobileNavigation ? 'customer-mobile-layout' : ''} ${className}`}>
+     {decorations && <PublicDecorations />}
+     <PublicHeader mode={mode} />
+     <main className="relative flex-1">{children}</main>
+     <PublicFooter />
++    {mobileNavigation && <CustomerMobileNavigation />}
+   </div>
+ }
+--- frontend\src\components\TimeSlots.tsx
++++ frontend\src\components\TimeSlots.tsx
+@@ -2,6 +2,7 @@
+ import { formatTime } from '../lib/format'
+ import type { AvailabilitySlot } from '../types/api'
+ import { Button } from './ui'
++import { SegmentedControl } from './SegmentedControl'
+ 
+ const periods = ['Manhã', 'Tarde', 'Noite']
+ export function slotPeriod(slot: AvailabilitySlot) {
+@@ -14,9 +15,8 @@
+   const grouped = periods.map((_, index) => slots.filter((slot) => slotPeriod(slot) === index))
+   const active = selectedPeriod !== null && grouped[selectedPeriod].length ? selectedPeriod : grouped.findIndex((group) => group.length > 0)
+   return <section className="mt-5" aria-label="Horários disponíveis">
+-    <div className="flex gap-1 rounded-xl border border-[#bdd5f4] p-1" role="group" aria-label="Período do dia">
+-      {periods.map((period, index) => <Button key={period} type="button" variant="secondary" className="min-w-0 flex-1 !px-2" aria-pressed={active === index} disabled={!grouped[index].length} onClick={() => { setSelectedPeriod(index); onChange('') }}>{period}</Button>)}
+-    </div>
++    <SegmentedControl label="Período do dia" options={periods.map((label, value) => ({ label, value, disabled: !grouped[value].length }))}
++      value={active} onChange={(period) => { setSelectedPeriod(period); onChange('') }} />
+     <div className="mt-4 flex gap-2 overflow-x-auto p-1 pb-3 sm:flex-wrap" aria-live="polite">{grouped[active]?.map((slot) => <Button key={`${slot.professional}-${slot.starts_at}`} type="button" variant="secondary" className="shrink-0" aria-pressed={value === slot.starts_at} onClick={() => onChange(slot.starts_at)}>{formatTime(slot.starts_at)}</Button>)}</div>
+     {!slots.length && <p className="mt-4 text-sm text-[#52658f]">Sem horários disponíveis nesta data.</p>}
+   </section>
+--- frontend\src\pages\CustomerAccountPage.tsx
++++ frontend\src\pages\CustomerAccountPage.tsx
+@@ -13,6 +13,7 @@
+ import { FavoriteSuggestions } from '../components/CustomerFavorites'
+ import { BookingDatePicker } from '../components/BookingDatePicker'
+ import { TimeSlots } from '../components/TimeSlots'
++import { SegmentedControl } from '../components/SegmentedControl'
+ import type { Appointment, AvailabilitySlot, Paginated } from '../types/api'
+ 
+ export default function CustomerAccountPage() {
+@@ -55,7 +56,7 @@
+ 
+   return <PublicPage mode="customer" decorations={false}>
+     <div className="mx-auto w-full max-w-[72rem] px-4 py-7 sm:px-7 lg:px-10 lg:py-9">
+-      <header className="flex flex-col gap-5 border-b border-[#dfe8f3] pb-6 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-xs font-bold uppercase tracking-[.16em] text-[#087cf0]">Área do cliente</p><h1 className="public-display mt-2 text-3xl sm:text-4xl">Olá, <span>{firstName}!</span></h1><p className="mt-2 text-sm text-[#52658a]">Acompanhe seus próximos horários e consulte seu histórico.</p></div><div className="flex flex-wrap items-center gap-3 sm:justify-end"><Link className="public-primary-link customer-action" to="/cliente/procurar"><PlusCircle className="size-4" aria-hidden="true" /> Agendar horário</Link><div className="view-switch" data-view={view} role="group" aria-label="Visualização da agenda">{(['appointments', 'calendar'] as const).map((mode) => <button key={mode} type="button" aria-pressed={view === mode} onClick={() => setView(mode)}>{mode === 'appointments' ? 'Agenda' : 'Calendário'}</button>)}</div></div></header>
++      <header className="flex flex-col gap-5 border-b border-[#dfe8f3] pb-6 lg:flex-row lg:items-end lg:justify-between"><div><p className="text-xs font-bold uppercase tracking-[.16em] text-[#087cf0]">Área do cliente</p><h1 className="public-display mt-2 text-3xl sm:text-4xl">Olá, <span>{firstName}!</span></h1><p className="mt-2 text-sm text-[#52658a]">Acompanhe seus próximos horários e consulte seu histórico.</p></div><div className="customer-agenda-actions"><Link className="public-primary-link customer-action" to="/cliente/procurar"><PlusCircle className="size-4" aria-hidden="true" /> Agendar horário</Link><SegmentedControl label="Visualização da agenda" options={[{ value: 'appointments', label: 'Agenda' }, { value: 'calendar', label: 'Calendário' }]} value={view} onChange={setView} /></div></header>
+       <section className="mt-7">
+         {view === 'calendar' && <CustomerCalendar onDetails={setDetailsTarget} />}
+         {view === 'appointments' && <><FavoriteSuggestions />
+--- frontend\src\pages\LoginPage.tsx
++++ frontend\src\pages\LoginPage.tsx
+@@ -5,7 +5,8 @@
+ import { useAuth } from '../auth/AuthProvider'
+ import { PublicBackLink, PublicPage } from '../components/PublicLayout'
+ import { Turnstile } from '../components/Turnstile'
+-import { Button, Field, Notice, PasswordInput, validateForm } from '../components/ui'
++import { Button, Dialog, Field, Notice, PasswordInput, validateForm } from '../components/ui'
++import { PasswordChangeFlow } from '../components/account/PasswordChangeFlow'
+ import logoIcon from '../assets/branding/notesync-icon.png'
+ 
+ export default function LoginPage() {
+@@ -80,7 +81,6 @@
+           <Field label="E-mail" hideLabel name="email" type="email" autoComplete="email" placeholder="E-mail" icon={Mail} required maxLength={254} error={fieldErrors.email} />
+           <PasswordInput label="Senha" hideLabel name="password" autoComplete="current-password" placeholder="Senha" icon={LockKeyhole} required minLength={12} maxLength={128} error={fieldErrors.password} />
+           <div className="flex justify-end"><button type="button" className="text-sm font-medium text-[#087cf0] hover:underline" onClick={() => setForgotHelp(true)}>Esqueci minha senha</button></div>
+-          {forgotHelp && <Notice kind="info">Solicite a redefinição de senha ao suporte do NoteSync.</Notice>}
+           <Turnstile action="login" onToken={setToken} />
+           {error && <Notice kind={Object.keys(fieldErrors).length ? 'validation' : 'error'}>{error}</Notice>}
+           <Button className="w-full" disabled={busy}>{busy ? 'Entrando…' : 'Entrar'}</Button>
+@@ -88,6 +88,12 @@
+         </form>
+         {!platform && <p className="mt-7 border-t border-[#dbe6f4] pt-7 text-center text-sm text-[#7182b2]">Ainda não tem conta? <Link className="font-semibold text-[#087cf0] hover:underline" to={professional ? '/profissional/cadastro' : customer ? '/cliente/cadastro' : '/empreendedor/cadastro'}>Criar conta</Link></p>}
+       </div>
++      <Dialog open={forgotHelp} title="Redefinir senha" onClose={() => setForgotHelp(false)}>
++        <PasswordChangeFlow recovery onSuccess={() => { setError(''); setFieldErrors({}) }} onDone={() => {
++          setForgotHelp(false)
++          navigate(location.pathname, { replace: true, state: { passwordChanged: true } })
++        }} />
++      </Dialog>
+     </section>
+   </PublicPage>
+ }
+--- frontend\src\pages\PublicBookingPage.tsx
++++ frontend\src\pages\PublicBookingPage.tsx
+@@ -12,7 +12,8 @@
+ import { Button, EmptyState, Field, LoadingState, Notice, SelectField, TextAreaField, validateForm } from '../components/ui'
+ import { durationMinutes, formatDateTime, formatMoney } from '../lib/format'
+ import { safeImageUrl } from '../lib/media'
+-import { enableBookingReminders } from '../lib/push'
++import { BookingReminders } from '../components/BookingReminders'
++import { CustomerMobileNavigation } from '../components/CustomerMobileNavigation'
+ import type { Appointment, AvailabilitySlot, Company, Professional, Service } from '../types/api'
+ import { BookingDatePicker } from '../components/BookingDatePicker'
+ import { TimeSlots } from '../components/TimeSlots'
+@@ -88,7 +89,6 @@
+     },
+   })
+   const cancel = useMutation({ mutationFn: () => user ? api.post<Appointment>(`/customers/appointments/${confirmation?.id}/cancel/`) : api.post<Appointment>(`/public/companies/${encodeURIComponent(slug)}/appointments/cancel/`, { management_token: managementToken }), onSuccess: setConfirmation })
+-  const reminders = useMutation({ mutationFn: () => enableBookingReminders(confirmation!.id, user ? undefined : managementToken) })
+ 
+   if (company.isPending) return <BookingFrame><LoadingState label="Carregando página da empresa" /></BookingFrame>
+   if (company.isError && company.error instanceof ApiError && company.error.status === 404) return <NotFoundPage />
+@@ -137,7 +137,7 @@
+           {step === 'time' && <StepSection title="Escolha a data e o horário" description="Os horários abaixo refletem a disponibilidade real da empresa."><BookingDatePicker slug={slug} service={service?.id || ''} professional={professional?.id || ''} unit={unitId} value={date} onChange={(value) => { setDate(value); setStartsAt('') }} />{availability.isFetching && <LoadingState label="Consultando disponibilidade" />}{availability.isError && <div className="mt-4"><Notice>{apiErrorMessage(availability.error)}</Notice></div>}{availability.data?.length === 0 && <div className="mt-5"><EmptyState title="Sem horários nesta data" description="Escolha outro dia para continuar." /></div>}{availability.data && <TimeSlots key={date} slots={availability.data} value={startsAt} onChange={setStartsAt} />}<div className="mt-6 flex justify-end"><Button disabled={!startsAt || create.isPending} onClick={() => rescheduling ? create.mutate() : setStep('details')}>{rescheduling ? 'Confirmar novo horário' : 'Continuar'}</Button></div>{create.isError && <div className="mt-4"><Notice>{apiErrorMessage(create.error)}</Notice></div>}</StepSection>}
+           {step === 'details' && <StepSection title="Seus dados" description="Confira como a empresa poderá identificar e contatar você.">{status === 'authenticated' && user && <div className="rounded-xl border border-[#d8e5f4] p-4"><p className="font-semibold">Usar meus dados salvos</p><div className="mt-2 text-sm leading-6 text-[#52658f]">{user.full_name}<br />{user.email}<br />{user.whatsapp}</div><div className="mt-3 grid gap-1"><label className="flex min-h-11 cursor-pointer items-center gap-2"><input type="radio" name="saved-data" checked={useSaved} onChange={() => setUseSaved(true)} /> Usar estes dados</label><label className="flex min-h-11 cursor-pointer items-center gap-2"><input type="radio" name="saved-data" checked={!useSaved} onChange={() => setUseSaved(false)} /> Alterar apenas neste agendamento</label></div></div>}<form className="mt-5 grid gap-4" onSubmit={nextFromDetails} noValidate>{(!user || !useSaved) && <><Field label="Nome" name="name" defaultValue={user?.full_name || snapshot.name} required error={fieldErrors.name} /><Field label="E-mail" name="email" type="email" defaultValue={user?.email || snapshot.email} required error={fieldErrors.email} /><Field label="WhatsApp" name="whatsapp" type="tel" defaultValue={user?.whatsapp || snapshot.whatsapp} required error={fieldErrors.whatsapp} /></>}<TextAreaField label="Observação (opcional)" name="notes" defaultValue={snapshot.notes} maxLength={2000} />{!user && <Turnstile action="anonymous_booking" onToken={setTurnstile} />}{Object.keys(fieldErrors).length > 0 && <Notice kind="validation">Preencha os campos obrigatórios.</Notice>}<Button className="w-full sm:ml-auto sm:w-auto" type="submit">Revisar agendamento</Button></form></StepSection>}
+           {step === 'review' && <StepSection title="Revise antes de confirmar" description="Verifique os dados antes de enviar o agendamento."><dl className="divide-y divide-[#e1eaf5] rounded-xl border border-[#d8e5f4] px-4">{[['Empresa', brand.name], ...(unit ? [['Unidade', `${unit.name} · ${unit.address}`]] : []), ['Serviço', service?.name], ['Profissional', professional?.name], ['Data e horário', startsAt ? formatDateTime(startsAt) : ''], ['Cliente', user && useSaved ? user.full_name : snapshot.name]].map(([label, value]) => <div key={label} className="grid gap-1 py-3 text-sm sm:grid-cols-[8rem_1fr]"><dt className="text-[#52658a]">{label}</dt><dd className="font-medium text-[#172653]">{value}</dd></div>)}</dl>{!user && <p className="mt-5 text-sm leading-6 text-[#52658f]">Ao continuar, seus dados serão coletados para realizar e administrar este agendamento. Saiba mais na <Link className="font-semibold text-[#087cf0] underline-offset-2 hover:underline" to="/politica-de-privacidade">Política de Privacidade</Link> e nos <Link className="font-semibold text-[#087cf0] underline-offset-2 hover:underline" to="/termos-de-uso">Termos de Uso</Link>.</p>}{create.isError && <div className="mt-4"><Notice>{apiErrorMessage(create.error)}</Notice></div>}<Button className="mt-6 w-full sm:ml-auto sm:w-auto" disabled={create.isPending} onClick={() => create.mutate()}>{create.isPending ? 'Confirmando…' : 'Confirmar agendamento'}</Button></StepSection>}
+-          {step === 'confirmed' && confirmation && <div className="py-2"><div className="grid size-12 place-items-center rounded-full bg-[#e7f7ee] text-[#16804b]"><Check className="size-6" /></div><h2 className="mt-5 text-2xl font-bold">Agendamento recebido</h2><p className="mt-2 max-w-2xl text-sm leading-6 text-[#52658a]">A empresa recebeu sua solicitação. Você pode acompanhar o status e gerenciar este horário enquanto o prazo permitir.</p><dl className="mt-6 grid gap-3 rounded-xl border border-[#d8e5f4] p-4 text-sm"><SummaryRow label="Status"><StatusBadge status={confirmation.status} outcome={confirmation.outcome} /></SummaryRow><SummaryRow label="Empresa">{confirmation.company_name}</SummaryRow>{confirmation.unit_name && <SummaryRow label="Unidade">{confirmation.unit_name} · {confirmation.unit_address}</SummaryRow>}<SummaryRow label="Serviço">{confirmation.service_name}</SummaryRow><SummaryRow label="Profissional">{confirmation.professional_name}</SummaryRow><SummaryRow label="Quando">{formatDateTime(confirmation.starts_at)}</SummaryRow></dl><div className="mt-5 rounded-xl border border-[#d8e5f4] p-4"><p className="font-semibold">Receba lembretes deste agendamento</p><p className="mt-1 text-sm text-[#52658a]">Ative somente se quiser. O agendamento funciona normalmente sem notificações.</p><Button className="mt-3" variant="secondary" loading={reminders.isPending} onClick={() => reminders.mutate()}>Ativar lembretes</Button>{reminders.isSuccess && <div className="mt-3"><Notice kind="success">Lembretes ativados neste navegador.</Notice></div>}{reminders.isError && <div className="mt-3"><Notice>{apiErrorMessage(reminders.error)}</Notice></div>}</div>{cancel.isError && <div className="mt-4"><Notice>{apiErrorMessage(cancel.error)}</Notice></div>}{(confirmation.can_cancel || confirmation.can_reschedule) && <div className="mt-6 flex flex-wrap gap-3">{confirmation.can_reschedule && <Button variant="secondary" onClick={beginReschedule}>Reagendar</Button>}{confirmation.can_cancel && <Button variant="danger" disabled={cancel.isPending} onClick={() => cancel.mutate()}>{cancel.isPending ? 'Cancelando…' : 'Cancelar agendamento'}</Button>}</div>}{user && <Link className="btn btn-secondary mt-3" to="/cliente"><CalendarDays className="size-4" /> Meus agendamentos</Link>}</div>}
++          {step === 'confirmed' && confirmation && <div className="py-2"><div className="grid size-12 place-items-center rounded-full bg-[#e7f7ee] text-[#16804b]"><Check className="size-6" /></div><h2 className="mt-5 text-2xl font-bold">Agendamento recebido</h2><p className="mt-2 max-w-2xl text-sm leading-6 text-[#52658a]">A empresa recebeu sua solicitação. Você pode acompanhar o status e gerenciar este horário enquanto o prazo permitir.</p><dl className="mt-6 grid gap-3 rounded-xl border border-[#d8e5f4] p-4 text-sm"><SummaryRow label="Status"><StatusBadge status={confirmation.status} outcome={confirmation.outcome} /></SummaryRow><SummaryRow label="Empresa">{confirmation.company_name}</SummaryRow>{confirmation.unit_name && <SummaryRow label="Unidade">{confirmation.unit_name} · {confirmation.unit_address}</SummaryRow>}<SummaryRow label="Serviço">{confirmation.service_name}</SummaryRow><SummaryRow label="Profissional">{confirmation.professional_name}</SummaryRow><SummaryRow label="Quando">{formatDateTime(confirmation.starts_at)}</SummaryRow></dl><BookingReminders key={confirmation.id} appointment={confirmation.id} managementToken={managementToken} />{cancel.isError && <div className="mt-4"><Notice>{apiErrorMessage(cancel.error)}</Notice></div>}{(confirmation.can_cancel || confirmation.can_reschedule) && <div className="mt-6 flex flex-wrap gap-3">{confirmation.can_reschedule && <Button variant="secondary" onClick={beginReschedule}>Reagendar</Button>}{confirmation.can_cancel && <Button variant="danger" disabled={cancel.isPending} onClick={() => cancel.mutate()}>{cancel.isPending ? 'Cancelando…' : 'Cancelar agendamento'}</Button>}</div>}{user && <Link className="btn btn-secondary mt-3" to="/cliente"><CalendarDays className="size-4" /> Meus agendamentos</Link>}</div>}
+         </section>
+       </div>
+     </div>
+@@ -145,7 +145,7 @@
+ }
+ 
+ function BookingFrame({ children }: { children: ReactNode }) {
+-  return <div className="booking-theme flex min-h-screen flex-col overflow-x-hidden"><PublicHeader mode="customer" /><main className="flex-1">{children}</main><PublicFooter /></div>
++  return <div className="booking-theme customer-mobile-layout flex min-h-screen flex-col overflow-x-hidden"><PublicHeader mode="customer" /><main className="flex-1">{children}</main><PublicFooter /><CustomerMobileNavigation /></div>
+ }
+ 
+ function BookingStepper({ current }: { current: number }) {
+--- frontend\src\styles\index.css
++++ frontend\src\styles\index.css
+@@ -142,13 +142,30 @@
+ .catalog-icon-button:hover, .catalog-icon-button:focus-visible { color: #0759ad; background: transparent; }
+ .catalog-icon-button[aria-pressed="true"] { color: #1f64b6; }
+ .customer-action::before { content: ''; position: absolute; inset: -2px; border-radius: inherit; }
+-.view-switch { position: relative; display: inline-grid; grid-template-columns: repeat(2, 1fr); flex: none; padding: .25rem; border: 1px solid #d8e0ea; border-radius: 1rem; background: #f5f7fa; }
+-.view-switch::before { content: ''; position: absolute; top: .25rem; bottom: .25rem; left: .25rem; width: calc((100% - .5rem) / 2); border-radius: .75rem; background: var(--blue-600); pointer-events: none; transition: transform 260ms cubic-bezier(.22, 1, .36, 1); }
+-.view-switch[data-view="calendar"]::before { transform: translateX(100%); }
+-.view-switch button { position: relative; min-height: 2.25rem; padding: .35rem 1rem; border-radius: .75rem; background: transparent; color: #52658a; font-size: .875rem; font-weight: 600; transition: color 200ms ease; }
+-.view-switch button:hover { color: #0759ad; }
+-.view-switch button[aria-pressed="true"] { color: #fff; }
+-.view-switch button::after { content: ''; position: absolute; inset: -4px 0; border-radius: inherit; }
++.segmented-control { position: relative; display: grid; grid-template-columns: repeat(var(--segment-count), minmax(0, 1fr)); min-width: 0; padding: .25rem; border: 1px solid #d8e0ea; border-radius: 1rem; background: #f5f7fa; }
++.segmented-indicator { position: absolute; top: .25rem; bottom: .25rem; left: .25rem; width: calc((100% - .5rem) / var(--segment-count)); border-radius: .75rem; background: var(--blue-600); pointer-events: none; transform: translateX(calc(var(--segment-index) * 100%)); transition: transform 260ms cubic-bezier(.22, 1, .36, 1); }
++.segmented-control button { position: relative; min-width: 0; min-height: 2.75rem; padding: .35rem .75rem; border: 0; border-radius: .75rem; background: transparent; color: #52658a; font-size: .875rem; font-weight: 600; transition: color 200ms ease; cursor: pointer; }
++.segmented-control button:hover { color: #0759ad; }
++.segmented-control button[aria-pressed="true"] { color: #fff; }
++.segmented-control button:disabled { opacity: .5; cursor: not-allowed; }
++.customer-agenda-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: .75rem; flex-shrink: 0; }
++.customer-agenda-actions .customer-action { min-height: 2.75rem; white-space: nowrap; }
++.customer-bottom-nav { display: none; }
++@media (max-width: 767px) {
++  .public-header-logo { position: absolute; left: 50%; transform: translateX(-50%); }
++  .public-header-logo img { max-width: min(13rem, calc(100vw - 8rem)); }
++  .public-header-actions { margin-left: auto; }
++  .customer-mobile-layout { padding-bottom: calc(4.5rem + env(safe-area-inset-bottom, 0px)); }
++  .customer-bottom-nav { position: fixed; inset: auto 0 0; z-index: 45; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); padding: .25rem max(.25rem, env(safe-area-inset-right, 0px)) calc(.25rem + env(safe-area-inset-bottom, 0px)) max(.25rem, env(safe-area-inset-left, 0px)); border-top: 1px solid #d8e5f4; background: rgb(255 255 255 / 97%); box-shadow: 0 -4px 18px rgb(7 16 68 / 5%); backdrop-filter: blur(12px); }
++  .customer-bottom-nav a { display: flex; min-width: 0; min-height: 4rem; flex-direction: column; align-items: center; justify-content: center; gap: .25rem; border-radius: .75rem; color: #52658a; font-size: .65rem; font-weight: 600; text-transform: uppercase; letter-spacing: .02em; transition: color 180ms ease, background 180ms ease; }
++  .customer-bottom-nav svg { width: 1.4rem; height: 1.4rem; }
++  .customer-bottom-nav a.active { color: #0759ad; background: #edf5ff; }
++  .customer-bottom-nav a:active { background: #e1efff; }
++  .customer-agenda-actions { justify-content: flex-start; }
++}
++@media (max-width: 479px) {
++  .customer-agenda-actions { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr); gap: .5rem; }
++}
+ .company-card-link::after { content: ''; position: absolute; inset: 0; border-radius: .75rem; }
+ .company-card-link:focus-visible { outline: none; box-shadow: none; }
+ .company-card-link:focus-visible::after { outline: 2px solid #0759ad; outline-offset: 3px; box-shadow: var(--shadow-focus); }
+@@ -208,6 +225,13 @@
+ .select-field select.field option { background: #fff; color: #071044; }
+ .calendar-month-nav { display: inline-grid; flex: none; width: 2.75rem; min-height: 2.75rem; place-items: center; padding: 0; border: 0; border-radius: .75rem; background: transparent; color: #52658a; transition: color 160ms ease; }
+ .calendar-month-nav:hover { color: #0759ad; background: transparent; }
++.calendar-month-nav:active:not(:disabled) { transform: translateY(1px); color: #164a8a; }
++.calendar-month-nav:disabled { opacity: .45; cursor: not-allowed; }
++.calendar-cell { height: 4.75rem; }
++.calendar-day { display: flex; width: 100%; height: 100%; flex-direction: column; align-items: center; justify-content: center; gap: .3rem; border: 0; border-radius: .65rem; background: transparent; color: #43557e; font-size: .875rem; cursor: pointer; transition: background 160ms ease; }
++.calendar-day:hover { background: #edf5ff; }
++.calendar-count-badge { display: inline-flex; min-width: 1.4rem; min-height: 1.4rem; align-items: center; justify-content: center; padding-inline: .3rem; border-radius: 999px; background: var(--blue-600); color: #fff; font-size: .75rem; font-weight: 700; line-height: 1; box-shadow: 0 0 0 2px #fff; }
++@media (min-width: 768px) { .calendar-cell { height: 6rem; } }
+ .calendar-day[aria-current="date"] { background: var(--blue-600); color: white; }
+ .calendar-day[aria-current="date"]:hover { background: var(--blue-700); color: white; }
+ .public-page .label { color: #070d35; font-weight: 600; }
+--- frontend\src\test\app-flows.test.tsx
++++ frontend\src\test\app-flows.test.tsx
+@@ -1,5 +1,5 @@
+ import { act, fireEvent, screen, waitFor } from '@testing-library/react'
+-import { describe, expect, it, vi } from 'vitest'
++import { afterEach, describe, expect, it, vi } from 'vitest'
+ import { Route, Routes } from 'react-router'
+ import App from '../app/App'
+ import { useAuth } from '../auth/AuthProvider'
+@@ -18,12 +18,14 @@
+   },
+ }
+ 
++afterEach(() => vi.useRealTimers())
++
+ function anonymousResponder(extra?: (url: string, init?: RequestInit) => Promise<Response> | undefined) {
+   return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+     const url = String(input)
+-    if (url.includes('/availability/days/')) return json({ available_dates: [] })
+     const custom = extra?.(url, init)
+     if (custom) return custom
++    if (url.includes('/availability/days/')) return json({ available_dates: [] })
+     if (url.endsWith('/auth/csrf/')) return json(null, 204)
+     if (url.endsWith('/auth/refresh/')) return json({ errors: { detail: 'Session unavailable' } }, 401)
+     if (url.endsWith('/legal/current/')) return json({ terms: { version: '2026-09-16', accepted: false }, privacy: { version: '2026-09-16', accepted: false } })
+@@ -272,10 +274,13 @@
+       return json({}, 404)
+     }))
+     renderApp(<App />)
+-    expect(await screen.findAllByRole('img', { name: 'Foto de Ana Cliente' })).toHaveLength(2)
++    expect(await screen.findAllByRole('img', { name: 'Foto de Ana Cliente' })).toHaveLength(3)
++    expect(screen.getByLabelText('Nome')).toHaveValue('Ana Cliente')
+   })
+ 
+   it('cliente anônimo agenda sem aceite obrigatório e vê o aviso de privacidade', async () => {
++    vi.useFakeTimers({ toFake: ['Date'] })
++    vi.setSystemTime(new Date('2030-01-01T12:00:00-03:00'))
+     window.history.replaceState({}, '', '/empresa-real')
+     vi.stubGlobal('fetch', anonymousResponder((url) => {
+       if (url.endsWith('/public/companies/empresa-real/')) return json(company)
+@@ -287,7 +292,12 @@
+     renderApp(<App />)
+     fireEvent.click(await screen.findByRole('button', { name: /Consulta/ }))
+     fireEvent.click(await screen.findByRole('button', { name: /Marina/ }))
+-    fireEvent.change(screen.getByLabelText('Data'), { target: { value: '2030-01-10' } })
++    const current = new Date()
++    const monthsAhead = (2030 - current.getFullYear()) * 12 - current.getMonth()
++    for (let index = 0; index < monthsAhead; index++) fireEvent.click(screen.getByRole('button', { name: 'Próximo mês' }))
++    const day = await screen.findByRole('button', { name: /quinta-feira, 10 de janeiro de 2030/ })
++    await waitFor(() => expect(day).toBeEnabled())
++    fireEvent.click(day)
+     fireEvent.click(await screen.findByRole('button', { name: '10:00' }))
+     fireEvent.click(screen.getByRole('button', { name: 'Continuar' }))
+     fireEvent.change(screen.getByLabelText('Nome'), { target: { value: 'Cliente sem conta' } })
+@@ -353,6 +363,8 @@
+   })
+ 
+   it('cliente autenticado usa dados salvos ou altera apenas o snapshot do agendamento', async () => {
++    vi.useFakeTimers({ toFake: ['Date'] })
++    vi.setSystemTime(new Date('2030-01-01T12:00:00-03:00'))
+     window.history.replaceState({}, '', '/empresa-real')
+     vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
+       const url = String(input)
+@@ -373,7 +385,12 @@
+     expect(screen.getAllByRole('button', { name: 'Abrir menu da conta' }).length).toBeGreaterThan(0)
+     fireEvent.click(await screen.findByRole('button', { name: /Consulta/ }))
+     fireEvent.click(await screen.findByRole('button', { name: /Marina/ }))
+-    fireEvent.change(screen.getByLabelText('Data'), { target: { value: '2030-01-10' } })
++    const current = new Date()
++    const monthsAhead = (2030 - current.getFullYear()) * 12 - current.getMonth()
++    for (let index = 0; index < monthsAhead; index++) fireEvent.click(screen.getByRole('button', { name: 'Próximo mês' }))
++    const day = await screen.findByRole('button', { name: /quinta-feira, 10 de janeiro de 2030/ })
++    await waitFor(() => expect(day).toBeEnabled())
++    fireEvent.click(day)
+     fireEvent.click(await screen.findByRole('button', { name: '10:00' }))
+     fireEvent.click(screen.getByRole('button', { name: 'Continuar' }))
+     expect(await screen.findByText('Usar meus dados salvos')).toBeInTheDocument()
+--- frontend\src\test\package-features.test.tsx
++++ frontend\src\test\package-features.test.tsx
+@@ -142,13 +142,15 @@
+     const now = new Date()
+     const month = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2, '0')}`
+     const event = { id: 'appt-1', company_name: 'Empresa Real', company_slug: 'empresa-real', company_address: '', company_city: '', company_state: '', service_name: 'Consulta', professional_name: 'Marina', starts_at: `${month}-10T10:00:00-03:00`, status: 'CONFIRMED', outcome: null, can_cancel: false, can_reschedule: false } as Appointment
+-    const fetcher = responder((url) => url.includes('/appointments/calendar/') ? json({ days: [{ date: `${month}-10`, count: 1 }], events: [event] }) : undefined)
++    const fetcher = responder((url) => url.includes('/appointments/calendar/') ? json({ days: [{ date: `${month}-10`, count: 1 }], events: [event] }) : url.includes(`start_date=${month}-10&end_date=${month}-10`) ? json({ count: 1, next: null, previous: null, results: [event] }) : undefined)
+     vi.stubGlobal('fetch', fetcher)
+     renderApp(<App />)
+     await screen.findByRole('heading', { name: /Olá, Ana/ })
+     expect(fetcher.mock.calls.some(([url]) => String(url).includes('/calendar/'))).toBe(false)
+     fireEvent.click(screen.getByRole('button', { name: 'Calendário' }))
+-    fireEvent.click(await screen.findByRole('button', { name: 'Empresa Real, Consulta, 10:00' }))
++    fireEvent.click(await screen.findByRole('button', { name: /, 1 agendamentos/ }))
++    const dayDialog = screen.getByRole('dialog', { name: /Agendamentos em/ })
++    fireEvent.click(await within(dayDialog).findByRole('button', { name: /10:00 · Empresa Real/ }))
+     const details = screen.getByRole('dialog', { name: 'Detalhes do agendamento' })
+     expect(within(details).getByText('Marina')).toBeInTheDocument()
+     fireEvent.click(within(details).getByRole('button', { name: 'Fechar' }))
+--- frontend\src\types\api.ts
++++ frontend\src\types\api.ts
+@@ -15,6 +15,7 @@
+   full_name: string
+   whatsapp: string
+   avatar: string | null
++  notification_preference?: boolean | null
+   is_superuser: boolean
+   company: CompanySummary | null
+   professional?: { id: string; name: string; company: string; company_name?: string; company_slug?: string } | null
+--- frontend\src\components\account\AccountMenu.tsx
++++ frontend\src\components\account\AccountMenu.tsx
+@@ -14,11 +14,11 @@
+ 
+ type AccountView = 'profile' | 'email' | 'settings' | 'favorites' | 'security' | 'password' | 'password-change' | 'delete' | null
+ 
+-export function AccountMenu() {
++export function AccountMenu({ page = false }: { page?: boolean }) {
+   const navigate = useNavigate()
+   const { user, logout, clearSession } = useAuth()
+   const [open, setOpen] = useState(false)
+-  const [view, setView] = useState<AccountView>(null)
++  const [view, setView] = useState<AccountView>(page ? 'profile' : null)
+   const [passwordChanged, setPasswordChanged] = useState(false)
+   const [leaving, setLeaving] = useState(false)
+   const rootRef = useRef<HTMLDivElement>(null)
+@@ -81,8 +81,9 @@
+   }, [clearSession, navigate])
+   const closeAccount = useCallback(() => {
+     if (passwordChanged) finishPasswordChange()
++    else if (page) navigate('/cliente')
+     else setView(null)
+-  }, [finishPasswordChange, passwordChanged])
++  }, [finishPasswordChange, passwordChanged, page, navigate])
+ 
+   const settingsView = view === 'settings' || view === 'favorites' || view === 'security' || view === 'password' || view === 'password-change' || view === 'delete'
+   const title = view === 'profile' ? 'Perfil'
+@@ -109,6 +110,31 @@
+           : undefined
+ 
+   if (!user) return null
++
++  const content = <>
++      {view === 'profile' && <ProfilePanel onEmailChange={() => setView('email')} />}
++      {view === 'email' && <EmailChangeFlow onDone={() => setView('profile')} />}
++      {view === 'settings' && <SettingsHome onSecurity={() => setView('security')} onFavorites={() => setView('favorites')} />}
++      {view === 'favorites' && <CustomerFavorites />}
++      {view === 'security' && <SecuritySettings onPassword={() => setView('password')} onDelete={() => setView('delete')} />}
++      {view === 'delete' && <AccountDeletionPanel />}
++      {view === 'password' && <PasswordSettings onPasswordChange={() => setView('password-change')} />}
++      {view === 'password-change' && <PasswordChangeFlow onSuccess={() => setPasswordChanged(true)} onDone={finishPasswordChange} />}
++  </>
++  if (page) return <section aria-label="Conta e configurações">
++    <header className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b border-[#dfe8f3] pb-5">
++      <h1 className="public-display text-3xl">{title}</h1>
++      {onBack && <button type="button" className="btn btn-ghost" onClick={onBack}>Voltar para {backLabel}</button>}
++    </header>
++    <div className="grid gap-6 md:grid-cols-[12rem_minmax(0,1fr)]">
++      <nav aria-label="Configurações da conta" className="grid content-start gap-2">
++        <AccountNavButton active={!settingsView} icon={UserRound} onClick={() => setView('profile')}>Perfil</AccountNavButton>
++        <AccountNavButton active={settingsView} icon={Settings2} onClick={() => setView('settings')}>Configurações</AccountNavButton>
++        <AccountNavButton icon={LogOut} disabled={leaving} onClick={() => void leave()}>{leaving ? 'Saindo…' : 'Sair'}</AccountNavButton>
++      </nav>
++      <div className="min-w-0 rounded-2xl border border-[#d8e5f4] bg-white p-4 sm:p-6">{content}</div>
++    </div>
++  </section>
+ 
+   return <>
+     <div ref={rootRef} className="relative shrink-0">
+@@ -152,14 +178,7 @@
+         ? <><AccountNavButton active={view !== 'settings' && view !== 'favorites'} icon={LockKeyhole} onClick={() => setView('security')}>Segurança</AccountNavButton><AccountNavButton active={view === 'favorites'} icon={Heart} onClick={() => setView('favorites')}>Favoritos</AccountNavButton></>
+         : <AccountNavButton active icon={UserRound} onClick={() => setView('profile')}>Perfil</AccountNavButton>}
+     >
+-      {view === 'profile' && <ProfilePanel onEmailChange={() => setView('email')} />}
+-      {view === 'email' && <EmailChangeFlow onDone={() => setView('profile')} />}
+-      {view === 'settings' && <SettingsHome onSecurity={() => setView('security')} onFavorites={() => setView('favorites')} />}
+-      {view === 'favorites' && <CustomerFavorites />}
+-      {view === 'security' && <SecuritySettings onPassword={() => setView('password')} onDelete={() => setView('delete')} />}
+-      {view === 'delete' && <AccountDeletionPanel />}
+-      {view === 'password' && <PasswordSettings onPasswordChange={() => setView('password-change')} />}
+-      {view === 'password-change' && <PasswordChangeFlow onSuccess={() => setPasswordChanged(true)} onDone={finishPasswordChange} />}
++      {content}
+     </AccountModalShell>}
+   </>
+ }
+--- frontend\src\components\account\PasswordChangeFlow.tsx
++++ frontend\src\components\account\PasswordChangeFlow.tsx
+@@ -1,8 +1,8 @@
+ import { useMutation } from '@tanstack/react-query'
+-import { useEffect, useRef, useState, type FormEvent } from 'react'
++import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
+ import { api, apiErrorMessage, apiFieldErrors } from '../../api/client'
+ import { useAuth } from '../../auth/AuthProvider'
+-import { Button, Notice, PasswordInput, validateForm } from '../ui'
++import { Button, Field, Notice, PasswordInput, validateForm } from '../ui'
+ import { OtpInput } from './OtpInput'
+ 
+ interface OtpResponse {
+@@ -19,12 +19,14 @@
+ 
+ type Step = 'identity' | 'otp' | 'password' | 'success'
+ 
+-export function PasswordChangeFlow({ onSuccess, onDone }: { onSuccess: () => void; onDone: () => void }) {
++export function PasswordChangeFlow({ onSuccess, onDone, recovery = false }: { onSuccess: () => void; onDone: () => void; recovery?: boolean }) {
+   const { user } = useAuth()
++  const emailInputId = useId()
+   const [step, setStep] = useState<Step>('identity')
+   const [challenge, setChallenge] = useState<OtpResponse | null>(null)
+   const [authorization, setAuthorization] = useState('')
+   const [code, setCode] = useState('')
++  const [email, setEmail] = useState('')
+   const [cooldown, setCooldown] = useState(0)
+   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+   const requestLock = useRef(false)
+@@ -38,7 +40,7 @@
+   }, [cooldown])
+ 
+   const requestOtp = useMutation({
+-    mutationFn: () => api.post<OtpResponse>('/customers/security/password/request/'),
++    mutationFn: () => api.post<OtpResponse>('/customers/security/password/request/', recovery ? { email } : undefined),
+     onSuccess: (data) => {
+       setChallenge(data)
+       setCode('')
+@@ -96,17 +98,23 @@
+     <p className="mb-5 text-xs font-semibold uppercase tracking-[.14em] text-[#087cf0]">
+       Etapa {step === 'identity' ? '1' : step === 'otp' ? '2' : step === 'password' ? '3' : '4'} de 4
+     </p>
+-    {step === 'identity' && <div>
++    {step === 'identity' && <form noValidate onSubmit={(event) => {
++      event.preventDefault()
++      const errors = validateForm(event.currentTarget)
++      setFieldErrors(errors)
++      if (!Object.keys(errors).length) sendCode()
++    }}>
+       <h3 className="text-lg font-bold text-[#071044]">Confirmar identidade</h3>
+-      <p className="mt-2 text-sm leading-6 text-[#52658f]">Para proteger sua conta, vamos enviar um código para {challenge?.masked_email || maskEmail(user?.email || '')}.</p>
++      {recovery ? <><p className="my-4 text-sm leading-6 text-[#52658f]">Informe o e-mail da sua conta para receber o código de recuperação.</p><Field id={emailInputId} label="E-mail" name="email" type="email" autoComplete="email" required maxLength={254} value={email} onChange={(event) => setEmail(event.target.value)} error={fieldErrors.email} /></> : <p className="mt-2 text-sm leading-6 text-[#52658f]">Para proteger sua conta, vamos enviar um código para {challenge?.masked_email || maskEmail(user?.email || '')}.</p>}
+       {requestOtp.isError && <div className="mt-4"><Notice>{apiErrorMessage(requestOtp.error)}</Notice></div>}
+-      <Button className="mt-6 w-full" disabled={requestOtp.isPending} onClick={sendCode}>
++      <Button type="submit" className="mt-6 w-full" disabled={requestOtp.isPending}>
+         {requestOtp.isPending ? 'Enviando…' : 'Enviar código de verificação'}
+       </Button>
+-    </div>}
++    </form>}
+     {step === 'otp' && <div>
+       <h3 className="text-lg font-bold text-[#071044]">Verifique seu e-mail</h3>
+       <p className="mt-2 text-sm leading-6 text-[#52658f]">Digite o código de 6 dígitos enviado para {challenge?.masked_email}.</p>
++      {recovery && <p className="mt-2 text-sm text-[#52658f]">Se houver uma conta com esse e-mail, o código será enviado. Verifique também o spam.</p>}
+       <div className="mt-5"><OtpInput value={code} onChange={setCode} disabled={verifyOtp.isPending} error={verifyOtp.isError ? apiErrorMessage(verifyOtp.error) : undefined} /></div>
+       <Button className="mt-5 w-full" disabled={code.length !== 6 || verifyOtp.isPending} onClick={verifyCode}>
+         {verifyOtp.isPending ? 'Verificando…' : 'Continuar'}
+@@ -114,6 +122,7 @@
+       <Button className="mt-2 w-full" variant="ghost" disabled={cooldown > 0 || requestOtp.isPending} onClick={sendCode}>
+         {cooldown > 0 ? `Reenviar código em ${formatCountdown(cooldown)}` : 'Reenviar código'}
+       </Button>
++      {requestOtp.isError && <Notice>{apiErrorMessage(requestOtp.error)}</Notice>}
+     </div>}
+     {step === 'password' && <form className="grid gap-4" onSubmit={submitPassword} noValidate>
+       <div><h3 className="text-lg font-bold text-[#071044]">Criar nova senha</h3><p className="mt-2 text-sm leading-6 text-[#52658f]">Use pelo menos 12 caracteres. Evite dados pessoais e senhas comuns.</p></div>
+--- frontend\src\components\account\SettingsDialog.tsx
++++ frontend\src\components\account\SettingsDialog.tsx
+@@ -1,5 +1,6 @@
+ import { LuChevronRight as ChevronRight, LuLockKeyhole as LockKeyhole } from 'react-icons/lu'
+ import { Button } from '../ui'
++import { NotificationSettings } from './NotificationSettings'
+ 
+ export function SettingsHome({ onSecurity, onFavorites }: { onSecurity: () => void; onFavorites: () => void }) {
+   return <section aria-labelledby="settings-home-title">
+@@ -19,6 +20,7 @@
+         <ChevronRight className="size-5 shrink-0 text-[#7182a8]" aria-hidden="true" />
+       </button>
+     </div>
++    <NotificationSettings />
+   </section>
+ }
+ 

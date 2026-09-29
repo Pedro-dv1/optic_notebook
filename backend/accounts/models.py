@@ -21,6 +21,7 @@ class User(AbstractUser):
     whatsapp = models.CharField(max_length=20, blank=True)
     avatar = models.ImageField(upload_to=customer_avatar_path, null=True, blank=True)
     auth_version = models.PositiveIntegerField(default=0, editable=False)
+    notification_preference = models.BooleanField(null=True, blank=True, default=None)
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = ["full_name"]

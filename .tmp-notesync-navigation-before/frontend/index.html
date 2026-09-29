@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#1f64b6" />
+    <meta name="description" content="Agendamentos simples para clientes e empresas." />
+    <meta property="og:title" content="NoteSync" />
+    <meta property="og:description" content="Agendamentos simples para clientes e empresas." />
+    <meta property="og:type" content="website" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/png" href="/src/assets/branding/notesync-icon.png" />
+    <title>NoteSync</title>
+    <style>
+      html[data-brand-intro="play"] { overflow: hidden; }
+      #brand-intro { display: none; }
+      html[data-brand-intro="play"] #brand-intro {
+        position: fixed; inset: 0; z-index: 2147483647; display: grid; place-items: center;
+        overflow: hidden; background: #fff;
+      }
+      #brand-intro-lockup { display: grid; justify-items: center; gap: 0; }
+      #brand-intro-symbol { width: min(15rem, 52vw, 32vh); height: auto; overflow: visible; }
+      #marker { transform-box: fill-box; transform-origin: center; transform: scale(0); }
+      #symbol-draw-guide { stroke-dasharray: 9999; stroke-dashoffset: 9999; }
+      #brand-intro-wordmark { width: min(32rem, 88vw); height: min(5rem, 14vw); margin-top: -2rem; margin-left: -14%; object-fit: cover; object-position: center; opacity: 0; transform: translateY(1rem); clip-path: inset(0 0 0 28%); }
+      #brand-iris-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
+      @media (prefers-reduced-motion: reduce) { #brand-intro { display: none !important; } }
+    </style>
+    <script>
+      try {
+        const seenIntro = sessionStorage.getItem('notesync-brand-intro-seen') || sessionStorage.getItem('optic-brand-intro-seen');
+        if (seenIntro) { sessionStorage.setItem('notesync-brand-intro-seen', '1'); sessionStorage.removeItem('optic-brand-intro-seen'); }
+        if (location.pathname === '/' && !matchMedia('(prefers-reduced-motion: reduce)').matches && !seenIntro) {
+          document.documentElement.dataset.brandIntro = 'play';
+          setTimeout(() => {
+            if (document.documentElement.dataset.brandIntro === 'play') {
+              document.documentElement.dataset.brandIntro = 'done';
+              document.getElementById('brand-intro')?.remove();
+              try { sessionStorage.setItem('notesync-brand-intro-seen', '1'); } catch {}
+              window.dispatchEvent(new Event('app:preloader-done'));
+            }
+          }, 8000);
+        }
+      } catch { /* Storage can be disabled; the app still loads. */ }
+    </script>
+  </head>
+  <body>
+    <svg id="brand-iris-defs" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <mask id="brand-iris-mask" maskUnits="userSpaceOnUse" maskContentUnits="userSpaceOnUse">
+          <rect id="brand-iris-field" x="0" y="0" fill="white" />
+          <circle id="brand-iris-circle" cx="0" cy="0" r="0" fill="black" />
+        </mask>
+      </defs>
+    </svg>
+    <div id="brand-intro" aria-hidden="true">
+      <div id="brand-intro-lockup">
+        <svg id="brand-intro-symbol" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940.5 940.499971">
+          <defs>
+            <mask id="brand-symbol-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="940.5" height="940.499971" style="mask-type: alpha">
+              <path id="symbol-draw-guide" d="M 155.167 790.079 L 155.167 311.834 L 157.416 284.848 L 161.914 254.864 L 167.161 229.378 L 170.909 218.134 L 181.403 200.143 L 194.147 186.651 L 206.890 176.906 L 220.383 170.159 L 229.378 167.161 L 267.608 160.415 L 287.097 161.914 L 317.831 167.911 L 336.571 176.156 L 348.564 184.402 L 780.335 629.665 L 785.582 637.910 L 790.079 648.405 L 798.325 687.384 L 798.325 697.129 L 793.078 723.365 L 790.079 735.359 L 788.580 736.858 L 787.831 741.355 L 783.333 750.351 L 776.587 760.095 L 768.341 768.341 L 756.347 777.336 L 745.103 782.583 L 727.113 787.081 L 706.124 790.829 L 694.131 791.579 L 658.899 784.832 L 640.909 777.336 L 630.414 769.840 L 614.673 754.848 L 343.317 467.751" fill="none" stroke="#101112" stroke-width="107.943" stroke-linecap="round" stroke-linejoin="round" />
+            </mask>
+          </defs>
+          <g id="notesync-symbol">
+            <path id="symbol" d="M 161.914 146.172 L 137.177 172.408 L 120.686 198.644 L 107.943 230.877 L 103.445 252.616 L 101.946 267.608 L 101.946 796.076 L 106.443 812.567 L 115.439 826.060 L 128.182 836.555 L 140.175 841.802 L 146.922 843.301 L 167.161 842.552 L 180.654 837.304 L 193.397 827.560 L 202.392 815.566 L 207.639 800.574 L 208.389 265.359 L 211.387 251.116 L 218.134 236.874 L 230.128 223.381 L 245.120 213.636 L 252.616 210.638 L 266.858 207.639 L 279.601 207.639 L 295.343 211.387 L 309.585 218.134 L 319.330 225.630 L 731.611 655.901 L 743.604 669.394 L 748.851 682.887 L 750.351 695.630 L 748.851 706.874 L 745.853 715.869 L 739.107 726.363 L 730.111 735.359 L 718.867 742.105 L 709.123 745.103 L 697.879 745.853 L 687.384 744.354 L 675.391 739.107 L 668.644 734.609 L 385.295 437.017 L 373.301 425.773 L 363.556 420.526 L 350.813 416.778 L 332.073 417.528 L 320.829 421.276 L 315.582 424.274 L 302.839 435.518 L 296.092 446.762 L 291.595 462.504 L 291.595 474.497 L 295.343 487.990 L 302.839 500.733 L 422.775 625.917 L 577.942 792.328 L 593.684 806.571 L 607.926 817.065 L 636.411 832.807 L 654.402 839.553 L 679.888 844.800 L 699.378 845.550 L 730.111 841.802 L 751.100 835.805 L 766.842 829.059 L 782.583 820.063 L 804.322 803.572 L 826.060 780.335 L 841.052 757.097 L 850.797 731.611 L 855.295 704.625 L 854.545 673.891 L 851.547 656.650 L 842.552 629.665 L 829.808 606.427 L 814.067 586.938 L 712.871 485.741 L 503.732 270.606 L 409.282 175.407 L 380.797 145.423 L 367.304 134.928 L 341.818 120.686 L 317.081 111.691 L 290.096 106.443 L 267.608 105.694 L 244.370 107.943 L 230.128 110.941 L 202.392 120.686 L 183.652 130.431 Z" fill="#101112" mask="url(#brand-symbol-mask)" />
+            <path id="marker" d="M 775.837 100.447 L 758.596 104.944 L 750.351 108.692 L 739.856 116.188 L 731.611 124.434 L 724.864 134.179 L 718.118 150.670 L 715.869 166.411 L 715.869 384.545 L 717.368 392.791 L 721.866 403.285 L 733.110 416.029 L 820.063 506.730 L 826.060 509.729 L 833.556 510.478 L 838.054 509.729 L 845.550 505.231 L 848.548 501.483 L 851.547 493.987 L 851.547 158.166 L 847.799 143.923 L 841.802 131.930 L 835.056 122.935 L 824.561 113.190 L 816.315 107.943 L 803.572 102.695 L 792.328 100.447 Z" fill="#026CFC" />
+          </g>
+        </svg>
+        <img id="brand-intro-wordmark" src="/src/assets/branding/notesync-wordmark.webp" alt="" />
+      </div>
+    </div>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -8,14 +8,33 @@ from platform_core.throttles import WindowScopedRateThrottle
 
 from .models import Service
 from .serializers import PublicServiceSerializer, ServiceAdminSerializer
+from bookings.operations import resolve_company_unit
+from bookings.serializers import UnitQuerySerializer
+from django.db import transaction
 
 
 class CompanyServiceViewSet(viewsets.ModelViewSet):
     permission_classes = (IsActiveCompanyAdmin,)
     serializer_class = ServiceAdminSerializer
 
+    @transaction.atomic
+    def create(self, request, *args, **kwargs):
+        Company.objects.select_for_update(no_key=True).get(pk=company_for_user(request.user).pk)
+        return super().create(request, *args, **kwargs)
+
+    @transaction.atomic
+    def update(self, request, *args, **kwargs):
+        Company.objects.select_for_update(no_key=True).get(pk=company_for_user(request.user).pk)
+        return super().update(request, *args, **kwargs)
+
     def get_queryset(self):
-        return Service.objects.filter(company=company_for_user(self.request.user)).prefetch_related("professionals")
+        company = company_for_user(self.request.user)
+        queryset = Service.objects.filter(company=company).prefetch_related("professionals", "units")
+        query = UnitQuerySerializer(data=self.request.query_params)
+        query.is_valid(raise_exception=True)
+        if unit_id := query.validated_data.get("unit"):
+            queryset = queryset.filter(units=resolve_company_unit(company, unit_id))
+        return queryset
 
     def perform_create(self, serializer):
         serializer.save(company=company_for_user(self.request.user))
@@ -35,7 +54,15 @@ class PublicServiceListView(generics.ListAPIView):
 
     def get_queryset(self):
         company = get_object_or_404(Company, slug=self.kwargs["slug"], status=Company.Status.ACTIVE)
-        return Service.objects.filter(
+        query = UnitQuerySerializer(data=self.request.query_params)
+        query.is_valid(raise_exception=True)
+        queryset = Service.objects.filter(
             company=company,
             is_active=True,
-        )
+        ).prefetch_related("units")
+        if unit_id := query.validated_data.get("unit"):
+            unit = resolve_company_unit(company, unit_id)
+            queryset = queryset.filter(units=unit).distinct()
+        else:
+            queryset = queryset.filter(units__company=company, units__is_active=True).distinct()
+        return queryset

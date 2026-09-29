@@ -4,11 +4,19 @@ from django.conf.urls.static import static
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from accounts.views import LoginView, LogoutView, MeView, RefreshView
+from accounts.views import AccountDeletionView, LoginView, LogoutView, MeView, ProfessionalRegistrationView, RefreshView
 from bookings.views import (
     AvailabilityView,
+    AvailabilityDaysView,
     CompanyAppointmentViewSet,
+    CompanyDashboardView,
+    CompanyReportView,
+    CompanyReviewViewSet,
     CustomerAppointmentViewSet,
+    ProfessionalAppointmentViewSet,
+    PublicReviewCreateView,
+    PushConfigView,
+    PushSubscriptionView,
     PublicAppointmentCancelView,
     PublicAppointmentCreateView,
     PublicAppointmentRescheduleView,
@@ -16,6 +24,7 @@ from bookings.views import (
 )
 from companies.views import (
     CompanyProfileView,
+    CompanyUnitViewSet,
     CompanyRegistrationView,
     CompanySettingsView,
     PlatformMetricsView,
@@ -28,6 +37,7 @@ from customers.views import (
     CustomerPasswordChangeView,
     CustomerProfileView,
     CustomerRegistrationView,
+    CompanyFavoriteViewSet,
     EmailChangeCurrentRequestView,
     EmailChangeCurrentVerifyView,
     EmailChangeNewRequestView,
@@ -36,20 +46,34 @@ from customers.views import (
     PasswordOtpVerifyView,
 )
 from platform_core.views import CsrfCookieView, CurrentLegalDocumentsView, PublicPlatformConfigView, RegistrationKeyListCreateView
-from professionals.views import CompanyProfessionalViewSet, CompanyWorkScheduleViewSet, PublicProfessionalListView
+from professionals.views import (
+    CompanyProfessionalViewSet, CompanyUnavailabilityViewSet, CompanyWorkScheduleViewSet, PublicProfessionalListView,
+)
 from services.views import CompanyServiceViewSet, PublicServiceListView
+from feedback.views import FeedbackViewSet, PlatformFeedbackViewSet
 
 platform_router = DefaultRouter()
 platform_router.register("companies", PlatformCompanyViewSet, basename="platform-company")
+platform_router.register("feedback", PlatformFeedbackViewSet, basename="platform-feedback")
+
+feedback_router = DefaultRouter()
+feedback_router.register("feedback", FeedbackViewSet, basename="feedback")
 
 company_router = DefaultRouter()
+company_router.register("units", CompanyUnitViewSet, basename="company-unit")
 company_router.register("services", CompanyServiceViewSet, basename="company-service")
 company_router.register("professionals", CompanyProfessionalViewSet, basename="company-professional")
 company_router.register("work-schedules", CompanyWorkScheduleViewSet, basename="company-work-schedule")
 company_router.register("appointments", CompanyAppointmentViewSet, basename="company-appointment")
+company_router.register("unavailabilities", CompanyUnavailabilityViewSet, basename="company-unavailability")
+company_router.register("reviews", CompanyReviewViewSet, basename="company-review")
 
 customer_router = DefaultRouter()
+customer_router.register("favorites", CompanyFavoriteViewSet, basename="customer-favorite")
 customer_router.register("appointments", CustomerAppointmentViewSet, basename="customer-appointment")
+
+professional_router = DefaultRouter()
+professional_router.register("appointments", ProfessionalAppointmentViewSet, basename="professional-appointment")
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -57,14 +81,19 @@ urlpatterns = [
     path("api/v1/auth/refresh/", RefreshView.as_view(), name="refresh"),
     path("api/v1/auth/logout/", LogoutView.as_view(), name="logout"),
     path("api/v1/auth/me/", MeView.as_view(), name="me"),
+    path("api/v1/auth/account/delete/", AccountDeletionView.as_view(), name="account-delete"),
     path("api/v1/auth/csrf/", CsrfCookieView.as_view(), name="csrf-cookie"),
+    path("api/v1/professionals/register/", ProfessionalRegistrationView.as_view(), name="professional-register"),
     path("api/v1/platform/registration-keys/", RegistrationKeyListCreateView.as_view(), name="registration-keys"),
     path("api/v1/platform/metrics/", PlatformMetricsView.as_view(), name="platform-metrics"),
     path("api/v1/platform/", include(platform_router.urls)),
+    path("api/v1/", include(feedback_router.urls)),
     path("api/v1/companies/register/", CompanyRegistrationView.as_view(), name="company-register"),
     path("api/v1/company/profile/", CompanyProfileView.as_view(), name="company-profile"),
     path("api/v1/company/settings/", CompanySettingsView.as_view(), name="company-settings"),
     path("api/v1/company/customers/", CompanyCustomerListView.as_view(), name="company-customers"),
+    path("api/v1/company/dashboard/", CompanyDashboardView.as_view(), name="company-dashboard"),
+    path("api/v1/company/reports/", CompanyReportView.as_view(), name="company-reports"),
     path("api/v1/company/", include(company_router.urls)),
     path("api/v1/public/platform/", PublicPlatformConfigView.as_view(), name="public-platform-config"),
     path("api/v1/legal/current/", CurrentLegalDocumentsView.as_view(), name="current-legal-documents"),
@@ -82,6 +111,10 @@ urlpatterns = [
         name="public-professionals",
     ),
     path("api/v1/public/companies/<slug:slug>/availability/", AvailabilityView.as_view(), name="availability"),
+    path("api/v1/public/companies/<slug:slug>/availability/days/", AvailabilityDaysView.as_view(), name="availability-days"),
+    path("api/v1/public/reviews/", PublicReviewCreateView.as_view(), name="public-review-create"),
+    path("api/v1/push/config/", PushConfigView.as_view(), name="push-config"),
+    path("api/v1/push/subscriptions/", PushSubscriptionView.as_view(), name="push-subscription"),
     path(
         "api/v1/public/companies/<slug:slug>/appointments/",
         PublicAppointmentCreateView.as_view(),
@@ -123,6 +156,7 @@ urlpatterns = [
         name="customer-email-new-verify",
     ),
     path("api/v1/customers/", include(customer_router.urls)),
+    path("api/v1/professional/", include(professional_router.urls)),
 ]
 
 if settings.DEBUG:

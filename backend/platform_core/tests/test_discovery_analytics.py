@@ -5,7 +5,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from accounts.models import User
-from bookings.models import Appointment
+from bookings.models import Appointment, Review
 from companies.models import CompanyDailyMetric, CompanyViewVisitor
 from services.models import Service
 
@@ -66,6 +66,28 @@ class PublicCompanyDiscoveryTests(APITestCase):
         self.assertNotIn(self.barbershop.owner.email, serialized)
         self.assertNotIn(self.barbershop.tax_identifier, serialized)
         self.assertNotIn("owner", ascending.data["results"][0])
+
+    def test_search_includes_average_rating_and_review_count(self):
+        unrated = {item["slug"]: item for item in self.search().data["results"]}
+        self.assertIsNone(unrated[self.barbershop.slug]["average_rating"])
+        self.assertEqual(unrated[self.barbershop.slug]["review_count"], 0)
+
+        service, professional, _ = create_booking_catalog(self.barbershop)
+        for index, rating in enumerate((5, 3)):
+            starts_at = timezone.now() - timedelta(days=2, hours=index)
+            booking = Appointment.objects.create(
+                company=self.barbershop, service=service, professional=professional,
+                starts_at=starts_at, ends_at=starts_at + timedelta(minutes=30),
+                status=Appointment.Status.CONFIRMED, outcome=Appointment.Outcome.COMPLETED,
+                customer_name="Cliente", customer_email="cliente@example.com", customer_whatsapp="+5511999999999",
+            )
+            Review.objects.create(appointment=booking, company=self.barbershop, rating=rating)
+
+        rated = {item["slug"]: item for item in self.search().data["results"]}
+        self.assertEqual(rated[self.barbershop.slug]["average_rating"], 4)
+        self.assertEqual(rated[self.barbershop.slug]["review_count"], 2)
+        self.assertIsNone(rated[self.clinic.slug]["average_rating"])
+        self.assertEqual(rated[self.clinic.slug]["review_count"], 0)
 
     def test_invalid_filter_is_rejected(self):
         response = self.search(state="XX", ordering="drop table")

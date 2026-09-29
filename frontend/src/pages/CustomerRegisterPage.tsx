@@ -2,7 +2,7 @@ import { LuLockKeyhole as LockKeyhole, LuMail as Mail, LuMessageCircle as Messag
 import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router'
 import { api, apiErrorMessage, apiFieldErrors } from '../api/client'
-import logoIcon from '../assets/branding/OpticNoteBook-logo-icon.png'
+import logoIcon from '../assets/branding/notesync-icon.png'
 import { PublicBackLink, PublicPage } from '../components/PublicLayout'
 import { Honeypot, Turnstile } from '../components/Turnstile'
 import { Button, Field, Notice, PasswordInput, validateForm } from '../components/ui'
@@ -53,8 +53,8 @@ export default function CustomerRegisterPage() {
 
   return <PublicPage mode="customer">
     <section className="mx-auto max-w-[50rem] px-5 pb-16 pt-8 sm:pt-12">
-      <PublicBackLink to="/cliente/login" />
       <div className="public-form-card px-6 py-9 sm:px-12 sm:py-11">
+        <PublicBackLink to="/cliente/login" />
         <img src={logoIcon} className="mx-auto size-14 object-contain" alt="" aria-hidden="true" />
         <p className="mt-4 text-center text-xs font-bold uppercase tracking-[.24em] text-[#087cf0]">Conta global do cliente</p>
         <h1 className="public-display mt-2 text-center text-3xl sm:text-4xl">Criar conta</h1>

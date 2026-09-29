@@ -1,5 +1,6 @@
 import { LuCircleAlert as AlertCircle, LuLoaderCircle as LoaderCircle, LuMapPin as MapPin } from 'react-icons/lu'
 import { useEffect, useId, useMemo, useState } from 'react'
+import { SelectField } from './ui'
 
 interface Municipality {
   id: number
@@ -119,6 +120,6 @@ export function CityAutocomplete({ city, state, states, onCityChange, onStateCha
         {suggestions.map((item, index) => <li key={item.id} id={`${listId}-${index}`} role="option" aria-selected={index === activeIndex} className={`cursor-pointer rounded-md px-3 py-2.5 text-sm ${index === activeIndex ? 'bg-[#eaf4ff] text-[#065fad]' : 'hover:bg-[#f3f8ff]'}`} onMouseDown={(event) => event.preventDefault()} onClick={() => select(item)}>{item.name} - {item.state}</li>)}
       </ul>}
     </div>
-    <div><label className="block"><span className="label required-label">Estado</span><select name="state" className="field" value={state} required aria-invalid={Boolean(stateError)} aria-describedby={stateError ? `${listId}-state-error` : undefined} onChange={(event) => onStateChange(event.target.value)}><option value="" disabled>Selecione</option>{states.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>{stateError && <span id={`${listId}-state-error`} className="field-error" role="alert"><AlertCircle className="size-3.5" aria-hidden="true" />{stateError}</span>}</div>
+    <SelectField label="Estado" id={`${listId}-state`} name="state" value={state} required error={stateError} onChange={(event) => onStateChange(event.target.value)}><option value="" disabled>Selecione</option>{states.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</SelectField>
   </>
 }

@@ -3,10 +3,12 @@ import { useState, type FormEvent } from 'react'
 import { Link, Navigate, useLocation, useNavigate } from 'react-router'
 import { apiErrorMessage, apiFieldErrors } from '../api/client'
 import { useAuth } from '../auth/AuthProvider'
+import { homeFor } from '../auth/RouteGuards'
 import { PublicBackLink, PublicPage } from '../components/PublicLayout'
 import { Turnstile } from '../components/Turnstile'
-import { Button, Field, Notice, PasswordInput, validateForm } from '../components/ui'
-import logoIcon from '../assets/branding/OpticNoteBook-logo-icon.png'
+import { Button, Dialog, Field, Notice, PasswordInput, validateForm } from '../components/ui'
+import { PasswordChangeFlow } from '../components/account/PasswordChangeFlow'
+import logoIcon from '../assets/branding/notesync-icon.png'
 
 export default function LoginPage() {
   const { user, status, login, logout } = useAuth()
@@ -14,6 +16,7 @@ export default function LoginPage() {
   const navigate = useNavigate()
   const platform = location.pathname.startsWith('/platform')
   const customer = location.pathname.startsWith('/cliente')
+  const professional = location.pathname.startsWith('/profissional')
   const [error, setError] = useState('')
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState(false)
@@ -21,8 +24,7 @@ export default function LoginPage() {
   const [forgotHelp, setForgotHelp] = useState(false)
 
   if (status === 'authenticated' && user) {
-    const destination = user.is_superuser ? '/platform' : user.company ? '/admin' : '/cliente'
-    return <Navigate to={destination} replace />
+    return <Navigate to={homeFor(user)} replace />
   }
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
@@ -43,11 +45,11 @@ export default function LoginPage() {
         password: String(form.get('password') || ''),
         turnstile_token: token,
       })
-      const target = authenticated.is_superuser ? '/platform' : authenticated.company ? '/admin' : '/cliente'
-      const correctContext = platform ? authenticated.is_superuser : customer ? !authenticated.is_superuser && !authenticated.company : !authenticated.is_superuser && Boolean(authenticated.company)
+      const target = homeFor(authenticated)
+      const correctContext = platform ? authenticated.is_superuser : professional ? Boolean(authenticated.professional) : customer ? !authenticated.is_superuser && !authenticated.company && !authenticated.professional : !authenticated.is_superuser && Boolean(authenticated.company)
       if (!correctContext) {
         await logout()
-        setError(`Esta entrada é exclusiva ${platform ? 'da administração da plataforma' : customer ? 'de clientes' : 'da gestão de empresas'}.`)
+        setError(`Esta entrada é exclusiva ${platform ? 'da administração da plataforma' : professional ? 'de profissionais' : customer ? 'de clientes' : 'da gestão de empresas'}.`)
       } else {
         navigate(target, { replace: true })
       }
@@ -61,15 +63,15 @@ export default function LoginPage() {
   }
 
   const mode = customer ? 'customer' : 'entrepreneur'
-  const title = platform ? 'Acesse o painel central' : customer ? 'Entre na sua conta' : 'Acesse seu painel'
-  const emphasis = platform ? 'painel central' : customer ? 'conta' : 'painel'
-  const description = platform ? 'Acesso exclusivo do administrador do OpticNoteBook.' : customer ? 'Acesse seus agendamentos de forma rápida e simples.' : 'Entre com seu e-mail e senha para gerenciar sua empresa.'
+  const title = platform ? 'Acesse o painel central' : professional ? 'Entre como profissional' : customer ? 'Entre na sua conta' : 'Acesse seu painel'
+  const emphasis = platform ? 'painel central' : professional ? 'profissional' : customer ? 'conta' : 'painel'
+  const description = platform ? 'Acesso exclusivo do administrador do NoteSync.' : professional ? 'Veja sua agenda e registre os atendimentos.' : customer ? 'Acesse seus agendamentos de forma rápida e simples.' : 'Entre com seu e-mail e senha para gerenciar sua empresa.'
   const titlePrefix = title.slice(0, title.lastIndexOf(emphasis))
 
   return <PublicPage mode={platform ? 'home' : mode}>
     <section className="mx-auto max-w-[42rem] px-5 pb-12 pt-5 sm:pt-8">
-      <PublicBackLink to="/" />
       <div className="public-form-card w-full px-6 py-7 sm:px-12 sm:py-9">
+        <PublicBackLink to="/" />
         <img src={logoIcon} className="mx-auto size-14 object-contain" alt="" aria-hidden="true" />
         <h1 className="public-display mt-3 text-center text-3xl sm:text-4xl">{titlePrefix}<span>{emphasis}</span></h1>
         <p className="mt-2 text-center text-base text-[#7182b2]">{description}</p>
@@ -79,14 +81,19 @@ export default function LoginPage() {
           <Field label="E-mail" hideLabel name="email" type="email" autoComplete="email" placeholder="E-mail" icon={Mail} required maxLength={254} error={fieldErrors.email} />
           <PasswordInput label="Senha" hideLabel name="password" autoComplete="current-password" placeholder="Senha" icon={LockKeyhole} required minLength={12} maxLength={128} error={fieldErrors.password} />
           <div className="flex justify-end"><button type="button" className="text-sm font-medium text-[#087cf0] hover:underline" onClick={() => setForgotHelp(true)}>Esqueci minha senha</button></div>
-          {forgotHelp && <Notice kind="info">Solicite a redefinição de senha ao suporte do OpticNoteBook.</Notice>}
           <Turnstile action="login" onToken={setToken} />
           {error && <Notice kind={Object.keys(fieldErrors).length ? 'validation' : 'error'}>{error}</Notice>}
           <Button className="w-full" disabled={busy}>{busy ? 'Entrando…' : 'Entrar'}</Button>
           {customer && <Link to="/cliente/procurar" className="btn btn-secondary w-full">Continuar sem conta</Link>}
         </form>
-        {!platform && <p className="mt-7 border-t border-[#dbe6f4] pt-7 text-center text-sm text-[#7182b2]">Ainda não tem conta? <Link className="font-semibold text-[#087cf0] hover:underline" to={customer ? '/cliente/cadastro' : '/empreendedor/cadastro'}>Criar conta</Link></p>}
+        {!platform && <p className="mt-7 border-t border-[#dbe6f4] pt-7 text-center text-sm text-[#7182b2]">Ainda não tem conta? <Link className="font-semibold text-[#087cf0] hover:underline" to={professional ? '/profissional/cadastro' : customer ? '/cliente/cadastro' : '/empreendedor/cadastro'}>Criar conta</Link></p>}
       </div>
+      <Dialog open={forgotHelp} title="Redefinir senha" onClose={() => setForgotHelp(false)}>
+        <PasswordChangeFlow recovery onSuccess={() => { setError(''); setFieldErrors({}) }} onDone={() => {
+          setForgotHelp(false)
+          navigate(location.pathname, { replace: true, state: { passwordChanged: true } })
+        }} />
+      </Dialog>
     </section>
   </PublicPage>
 }

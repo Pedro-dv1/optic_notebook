@@ -77,17 +77,26 @@ EMAIL_PROVIDER = os.getenv("EMAIL_PROVIDER", "").strip()
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
 DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "webmaster@localhost").strip()
 EMAIL_TIMEOUT_SECONDS = 5
-PLATFORM_NAME = os.getenv("PLATFORM_NAME", "OpticNoteBook").strip()
+PLATFORM_NAME = os.getenv("PLATFORM_NAME", "NoteSync").strip()
 PLATFORM_SUPPORT_EMAIL = os.getenv("PLATFORM_SUPPORT_EMAIL", "").strip()
 PLATFORM_ADMIN_EMAIL = os.getenv("PLATFORM_ADMIN_EMAIL", "").strip()
 TURNSTILE_REQUIRED = boolean("TURNSTILE_REQUIRED", default=IS_PRODUCTION)
 TURNSTILE_SECRET_KEY = os.getenv("TURNSTILE_SECRET_KEY", "").strip()
 TURNSTILE_EXPECTED_HOSTNAMES = csv_values("TURNSTILE_EXPECTED_HOSTNAMES")
 TURNSTILE_TIMEOUT_SECONDS = 5
+WEB_PUSH_VAPID_PUBLIC_KEY = os.getenv("WEB_PUSH_VAPID_PUBLIC_KEY", "").strip()
+WEB_PUSH_VAPID_PRIVATE_KEY = os.getenv("WEB_PUSH_VAPID_PRIVATE_KEY", "").strip()
+WEB_PUSH_VAPID_SUBJECT = os.getenv("WEB_PUSH_VAPID_SUBJECT", "").strip()
+WEB_PUSH_ALLOWED_HOST_SUFFIXES = csv_values("WEB_PUSH_ALLOWED_HOST_SUFFIXES") or [
+    "googleapis.com", "mozilla.com", "push.apple.com", "notify.windows.com",
+]
+WEB_PUSH_TIMEOUT_SECONDS = 5
 if IS_PRODUCTION and TURNSTILE_REQUIRED and not TURNSTILE_SECRET_KEY:
     raise ImproperlyConfigured("TURNSTILE_SECRET_KEY is required when Turnstile is enabled in production.")
 if IS_PRODUCTION and TURNSTILE_REQUIRED and not TURNSTILE_EXPECTED_HOSTNAMES:
     raise ImproperlyConfigured("TURNSTILE_EXPECTED_HOSTNAMES is required when Turnstile is enabled in production.")
+if IS_PRODUCTION and not all((WEB_PUSH_VAPID_PUBLIC_KEY, WEB_PUSH_VAPID_PRIVATE_KEY, WEB_PUSH_VAPID_SUBJECT)):
+    raise ImproperlyConfigured("Web Push VAPID configuration is required in production.")
 if EMAIL_PROVIDER not in {"", "resend"}:
     raise ImproperlyConfigured("EMAIL_PROVIDER must be empty or resend.")
 if IS_PRODUCTION and (EMAIL_PROVIDER != "resend" or not RESEND_API_KEY or not DEFAULT_FROM_EMAIL):
@@ -111,6 +120,7 @@ INSTALLED_APPS = [
     "services",
     "professionals",
     "bookings",
+    "feedback",
 ]
 
 MIDDLEWARE = [
@@ -226,6 +236,13 @@ REST_FRAMEWORK = {
         "public_change": "10/600s",
         "availability": "60/minute",
         "public_read": "120/minute",
+        "professional_registration": "5/3600s",
+        "public_review": "10/3600s",
+        "push_subscription": "10/600s",
+        "account_deletion": "5/600s",
+        "feedback_create": "10/3600s",
+        "feedback_upload": "20/3600s",
+        "feedback_reply": "30/3600s",
     },
     "EXCEPTION_HANDLER": "platform_core.exceptions.api_exception_handler",
 }

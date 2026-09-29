@@ -2,17 +2,18 @@ import { Navigate, Outlet, useLocation } from 'react-router'
 import { LoadingState } from '../components/ui'
 import { useAuth } from './AuthProvider'
 
-type Role = 'customer' | 'company' | 'platform'
+type Role = 'customer' | 'company' | 'professional' | 'platform'
 
 function userRole(user: ReturnType<typeof useAuth>['user']): Role | null {
   if (!user) return null
   if (user.is_superuser) return 'platform'
   if (user.company) return 'company'
+  if (user.professional) return 'professional'
   return 'customer'
 }
 
 export function homeFor(user: NonNullable<ReturnType<typeof useAuth>['user']>) {
-  return user.is_superuser ? '/platform' : user.company ? '/admin' : '/cliente'
+  return user.is_superuser ? '/platform' : user.company ? '/admin' : user.professional ? '/profissional' : '/cliente/procurar'
 }
 
 export function ProtectedRoute({ role }: { role: Role }) {
@@ -20,7 +21,7 @@ export function ProtectedRoute({ role }: { role: Role }) {
   const location = useLocation()
   if (status === 'loading') return <LoadingState label="Restabelecendo sua sessão" fullScreen />
   if (!user) {
-    const login = role === 'platform' ? '/platform/login' : role === 'company' ? '/empreendedor/login' : '/cliente/login'
+    const login = role === 'platform' ? '/platform/login' : role === 'company' ? '/empreendedor/login' : role === 'professional' ? '/profissional/login' : '/cliente/login'
     return <Navigate to={login} replace state={{ from: location.pathname }} />
   }
   if (userRole(user) !== role) {

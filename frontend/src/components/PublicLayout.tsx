@@ -2,14 +2,15 @@ import { LuArrowLeft as ArrowLeft, LuCalendarDays as CalendarDays, LuClipboardCh
 import { useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { useAuth } from '../auth/AuthProvider'
-import logoWithText from '../assets/branding/OpticNoteBook-logo-text.svg'
+import logoWithText from '../assets/branding/notesync-wordmark.webp'
 import { PublicFooter } from './Footer'
 import { ProfileAvatar } from './ProfileAvatar'
 import { AccountMenu } from './account/AccountMenu'
+import { CustomerMobileNavigation } from './CustomerMobileNavigation'
 
 export function PublicLogo({ className = '' }: { className?: string }) {
-  return <Link to="/" className={`inline-flex shrink-0 items-center ${className}`} aria-label="OpticNoteBook — início">
-    <img src={logoWithText} alt="OpticNoteBook" className="h-14 w-auto max-w-[15rem] object-contain sm:h-16 sm:max-w-[18rem]" />
+  return <Link to="/" className={`inline-flex shrink-0 items-center ${className}`} aria-label="NoteSync — início">
+    <img src={logoWithText} alt="NoteSync" className="h-12 w-auto max-w-[13rem] object-contain sm:h-14 sm:max-w-[15rem]" />
   </Link>
 }
 
@@ -26,13 +27,14 @@ export function PublicHeader({ mode = 'customer' }: { mode?: HeaderMode }) {
   const { user } = useAuth()
   const loginTo = mode === 'entrepreneur' ? '/empreendedor/login' : '/cliente/login'
   const registerTo = mode === 'entrepreneur' ? '/empreendedor/cadastro' : '/cliente/cadastro'
-  const accountTo = user?.is_superuser ? '/platform' : user?.company ? '/admin' : '/cliente'
-  const isCustomer = Boolean(user && !user.is_superuser && !user.company)
+  const accountTo = user?.is_superuser ? '/platform' : user?.company ? '/admin' : user?.professional ? '/profissional' : '/cliente'
+  const isCustomer = Boolean(user && !user.is_superuser && !user.company && !user.professional)
+  const usesMobileNavigation = isCustomer || (!user && mode !== 'entrepreneur')
   return <header className="public-header sticky top-0 z-40 backdrop-blur-md">
-    <div className="mx-auto flex h-20 max-w-[90rem] items-center justify-between gap-3 px-5 sm:h-[5.5rem] sm:gap-6 sm:px-8 lg:px-12">
-      <PublicLogo />
-      <nav className="hidden items-center gap-9 text-[1.02rem] font-medium text-[#6173a5] md:flex" aria-label="Navegação pública">
-        <Link to="/como-funciona" className="public-nav-link">Como funciona</Link>
+    <div className="public-header-content relative mx-auto flex h-20 max-w-[90rem] items-center justify-between gap-3 px-5 sm:h-[5.5rem] sm:gap-6 sm:px-8 lg:px-12">
+      <PublicLogo className="public-header-logo" />
+      <nav className="hidden items-center gap-9 text-[1.02rem] font-medium text-[#6173a5] lg:flex" aria-label="Navegação pública">
+        {!isCustomer && <Link to="/como-funciona" className="public-nav-link">Como funciona</Link>}
         {user ? <><Link to={isCustomer ? '/cliente' : accountTo}>{isCustomer ? 'Meus agendamentos' : 'Painel'}</Link>{isCustomer ? <AccountMenu /> : <Link to={accountTo} className="header-account-link" aria-label="Abrir minha conta"><ProfileAvatar src={user.avatar} name={user.full_name} className="size-full" /></Link>}</> : mode === 'home' ? <>
           <span className="text-[#9aabd0]" aria-hidden="true">|</span>
           <Link to="/politica-de-privacidade" className="public-nav-link">Política de Privacidade</Link>
@@ -42,15 +44,15 @@ export function PublicHeader({ mode = 'customer' }: { mode?: HeaderMode }) {
           <Link to={registerTo} className="public-primary-link">Criar conta</Link>
         </>}
       </nav>
-      <div className="flex items-center gap-2 md:hidden">
-        {isCustomer && <AccountMenu />}
+      <div className={`public-header-actions items-center gap-2 lg:hidden ${usesMobileNavigation ? 'hidden md:flex' : 'flex'}`}>
         <button type="button" className="btn btn-ghost !size-12 !min-h-0 !p-0" onClick={() => setOpen((value) => !value)} aria-label={open ? 'Fechar menu' : 'Abrir menu'} aria-expanded={open}>
           {open ? <X className="size-8" /> : <Menu className="size-9" />}
         </button>
+        {isCustomer && <AccountMenu />}
       </div>
     </div>
-    {open && <nav className="absolute inset-x-0 top-full border-y border-[#d9e6f8] bg-white px-6 py-5 text-[#071044] shadow-sm md:hidden" aria-label="Navegação móvel">
-      <div className="mx-auto grid max-w-lg gap-2"><Link to="/como-funciona" className="py-2" onClick={() => setOpen(false)}>Como funciona</Link>
+    {open && <nav className={`absolute inset-x-0 top-full border-y border-[#d9e6f8] bg-white px-6 py-5 text-[#071044] shadow-sm lg:hidden ${usesMobileNavigation ? 'hidden md:block' : ''}`} aria-label="Navegação móvel">
+      <div className="mx-auto grid max-w-lg gap-2">{!isCustomer && <Link to="/como-funciona" className="py-2" onClick={() => setOpen(false)}>Como funciona</Link>}
         {user ? isCustomer ? <><Link to="/cliente" className="py-2" onClick={() => setOpen(false)}>Meus agendamentos</Link><Link to="/cliente/procurar" className="py-2" onClick={() => setOpen(false)}>Buscar empresas</Link></> : <Link to={accountTo} className="py-2" onClick={() => setOpen(false)}>Painel</Link> : mode === 'home' ? <Link to="/politica-de-privacidade" className="py-2" onClick={() => setOpen(false)}>Política de Privacidade</Link> : <><Link to={loginTo} className="py-2" onClick={() => setOpen(false)}>Entrar</Link><Link to={registerTo} className="public-primary-link mt-1 text-center" onClick={() => setOpen(false)}>Criar conta</Link></>}
       </div>
     </nav>}
@@ -67,10 +69,13 @@ export function PublicDecorations() {
 }
 
 export function PublicPage({ children, mode = 'customer', className = '', decorations = true }: { children: ReactNode; mode?: HeaderMode; className?: string; decorations?: boolean }) {
-  return <div className={`public-page relative flex min-h-screen flex-col overflow-x-clip ${className}`}>
+  const { user } = useAuth()
+  const mobileNavigation = mode !== 'entrepreneur' && !(user?.is_superuser || user?.company || user?.professional)
+  return <div className={`public-page relative flex min-h-screen flex-col ${mobileNavigation ? 'customer-mobile-layout' : ''} ${className}`}>
     {decorations && <PublicDecorations />}
     <PublicHeader mode={mode} />
-    <main className="relative z-10 flex-1">{children}</main>
+    <main className="relative flex-1">{children}</main>
     <PublicFooter />
+    {mobileNavigation && <CustomerMobileNavigation />}
   </div>
 }

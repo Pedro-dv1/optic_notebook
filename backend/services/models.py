@@ -1,7 +1,7 @@
 from datetime import timedelta
 
 from django.core.validators import MinValueValidator
-from django.db import models
+from django.db import models, transaction
 from django.db.models import Q
 
 from platform_core.models import UUIDTimestampedModel
@@ -9,6 +9,8 @@ from platform_core.models import UUIDTimestampedModel
 
 class Service(UUIDTimestampedModel):
     company = models.ForeignKey("companies.Company", on_delete=models.CASCADE, related_name="services")
+    # Only explicit memberships offer this service in a unit.
+    units = models.ManyToManyField("companies.CompanyUnit", related_name="services", blank=True)
     name = models.CharField(max_length=120)
     description = models.TextField(blank=True, max_length=2000)
     price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, validators=[MinValueValidator(0)])
@@ -21,7 +23,6 @@ class Service(UUIDTimestampedModel):
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=("company", "name"), name="unique_service_name_per_company"),
             models.CheckConstraint(
                 condition=Q(duration__gte=timedelta(minutes=5), duration__lte=timedelta(days=1)),
                 name="service_duration_range",
@@ -36,3 +37,12 @@ class Service(UUIDTimestampedModel):
 
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        creating = self._state.adding
+        with transaction.atomic():
+            super().save(*args, **kwargs)
+            if creating:
+                units = list(self.company.units.filter(is_active=True)[:2])
+                if len(units) == 1:
+                    self.units.add(units[0])

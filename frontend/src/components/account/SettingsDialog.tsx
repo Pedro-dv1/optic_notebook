@@ -1,7 +1,7 @@
 import { LuChevronRight as ChevronRight, LuLockKeyhole as LockKeyhole } from 'react-icons/lu'
 import { Button } from '../ui'
 
-export function SettingsHome({ onSecurity }: { onSecurity: () => void }) {
+export function SettingsHome({ onSecurity, onFavorites, onNotifications }: { onSecurity: () => void; onFavorites: () => void; onNotifications: () => void }) {
   return <section aria-labelledby="settings-home-title">
     <h3 id="settings-home-title" className="sr-only">Configurações</h3>
     <p className="text-sm leading-6 text-[#52658f]">Gerencie as configurações da sua conta.</p>
@@ -14,11 +14,19 @@ export function SettingsHome({ onSecurity }: { onSecurity: () => void }) {
         <span><span className="block font-semibold text-[#172653]">Segurança</span><span className="mt-1 block text-sm text-[#7182a8]">Gerencie senha e acesso à sua conta.</span></span>
         <ChevronRight className="size-5 shrink-0 text-[#7182a8]" aria-hidden="true" />
       </button>
+      <button type="button" aria-label="Abrir Favoritos" className="mt-3 flex min-h-20 w-full items-center justify-between gap-4 rounded-xl border border-[#d8e5f4] px-4 py-3 text-left transition-colors hover:border-[#8fc0f1] hover:bg-[#f7fbff]" onClick={onFavorites}>
+        <span><span className="block font-semibold text-[#172653]">Favoritos</span><span className="mt-1 block text-sm text-[#7182a8]">Consulte e remova os estabelecimentos salvos.</span></span>
+        <ChevronRight className="size-5 shrink-0 text-[#7182a8]" aria-hidden="true" />
+      </button>
+      <button type="button" aria-label="Abrir Mensagens e lembretes" className="mt-3 flex min-h-20 w-full items-center justify-between gap-4 rounded-xl border border-[#d8e5f4] px-4 py-3 text-left transition-colors hover:border-[#8fc0f1] hover:bg-[#f7fbff]" onClick={onNotifications}>
+        <span><span className="block font-semibold text-[#172653]">Mensagens e lembretes</span><span className="mt-1 block text-sm text-[#7182a8]">Escolha se deseja receber notificações dos agendamentos.</span></span>
+        <ChevronRight className="size-5 shrink-0 text-[#7182a8]" aria-hidden="true" />
+      </button>
     </div>
   </section>
 }
 
-export function SecuritySettings({ onPassword }: { onPassword: () => void }) {
+export function SecuritySettings({ onPassword, onDelete }: { onPassword: () => void; onDelete: () => void }) {
   return <section aria-labelledby="security-settings-title">
     <h3 id="security-settings-title" className="sr-only">Segurança</h3>
     <p className="text-sm leading-6 text-[#52658f]">Gerencie a proteção e o acesso à sua conta.</p>
@@ -26,6 +34,7 @@ export function SecuritySettings({ onPassword }: { onPassword: () => void }) {
       <span><span className="block font-semibold text-[#172653]">Senha</span><span className="mt-1 block text-sm text-[#7182a8]">Gerencie a senha usada para acessar sua conta.</span></span>
       <ChevronRight className="size-5 shrink-0 text-[#7182a8]" aria-hidden="true" />
     </button>
+    <div className="mt-6 rounded-xl border border-[#e3a1a8] p-4"><h4 className="font-semibold text-[#a52d39]">Excluir minha conta</h4><p className="mt-2 text-sm text-[#43557e]">Apague permanentemente sua conta e seus dados pessoais.</p><Button type="button" variant="danger" className="mt-4" onClick={onDelete}>Excluir minha conta</Button></div>
   </section>
 }
 

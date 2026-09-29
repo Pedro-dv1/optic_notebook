@@ -14,11 +14,13 @@ from .models import User
 
 class UserSerializer(serializers.ModelSerializer):
     company = serializers.SerializerMethodField()
+    professional = serializers.SerializerMethodField()
+    role = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ("id", "email", "full_name", "whatsapp", "avatar", "is_superuser", "company")
-        read_only_fields = ("id", "email", "is_superuser", "company")
+        fields = ("id", "email", "full_name", "whatsapp", "avatar", "notification_preference", "is_superuser", "company", "professional", "role")
+        read_only_fields = ("id", "email", "is_superuser", "company", "professional", "role")
 
     def get_company(self, obj):
         company = company_for_user(obj)
@@ -29,14 +31,38 @@ class UserSerializer(serializers.ModelSerializer):
     def validate_whatsapp(self, value):
         return normalize_phone(value) if value else ""
 
+    def get_professional(self, obj):
+        from platform_core.permissions import professional_for_user
+
+        professional = professional_for_user(obj)
+        if not professional:
+            return None
+        return {
+            "id": professional.id,
+            "name": professional.name,
+            "company": professional.company_id,
+            "company_name": professional.company.name,
+            "company_slug": professional.company.slug,
+        }
+
+    def get_role(self, obj):
+        if obj.is_superuser:
+            return "platform"
+        if self.get_company(obj):
+            return "company"
+        if self.get_professional(obj):
+            return "professional"
+        return "customer"
+
 
 class CustomerProfileSerializer(serializers.ModelSerializer):
     avatar = serializers.FileField(required=False, allow_null=True)
     full_name = serializers.CharField(min_length=2, max_length=150)
+    notification_preference = serializers.BooleanField(required=False, allow_null=True)
 
     class Meta:
         model = User
-        fields = ("id", "email", "full_name", "whatsapp", "avatar")
+        fields = ("id", "email", "full_name", "whatsapp", "avatar", "notification_preference")
         read_only_fields = ("id", "email")
 
     def validate_full_name(self, value):
@@ -46,7 +72,7 @@ class CustomerProfileSerializer(serializers.ModelSerializer):
         return normalize_phone(value) if value else ""
 
     def validate_avatar(self, value):
-        return validate_image_upload(value) if value else None
+        return validate_image_upload(value, max_dimension=512, max_input_dimension=4096) if value else None
 
     def update(self, instance, validated_data):
         previous_name = instance.avatar.name if instance.avatar else ""
@@ -65,7 +91,7 @@ class OtpVerificationSerializer(serializers.Serializer):
 
 
 class AccountActionRequestSerializer(serializers.Serializer):
-    pass
+    email = serializers.EmailField(required=False, max_length=254)
 
 
 class AuthorizationSerializer(serializers.Serializer):
@@ -79,7 +105,7 @@ class CustomerPasswordChangeSerializer(AuthorizationSerializer):
     def validate(self, attrs):
         if attrs["new_password"] != attrs["new_password_confirm"]:
             raise serializers.ValidationError({"new_password_confirm": "As novas senhas não coincidem."})
-        user = self.context["request"].user
+        user = self.context.get("password_user", self.context["request"].user)
         if user.check_password(attrs["new_password"]):
             raise serializers.ValidationError({"new_password": "A nova senha deve ser diferente da senha atual."})
         validate_password(attrs["new_password"], user)
@@ -119,6 +145,16 @@ class EmailTokenObtainPairSerializer(TokenObtainPairSerializer):
 
 class LogoutSerializer(serializers.Serializer):
     pass
+
+
+class AccountDeletionSerializer(serializers.Serializer):
+    password = serializers.CharField(write_only=True, max_length=128, trim_whitespace=False)
+    confirmation = serializers.ChoiceField(choices=("EXCLUIR",))
+
+    def validate(self, attrs):
+        if set(self.initial_data) - {"password", "confirmation"}:
+            raise serializers.ValidationError("A exclusão aceita somente os dados de confirmação da própria conta.")
+        return attrs
 
 
 class CustomerRegistrationSerializer(serializers.ModelSerializer):
@@ -167,3 +203,55 @@ class CustomerRegistrationSerializer(serializers.ModelSerializer):
                 return user
         except IntegrityError as exc:
             raise serializers.ValidationError("Este e-mail já está cadastrado.") from exc
+
+
+class ProfessionalRegistrationSerializer(serializers.Serializer):
+    full_name = serializers.CharField(min_length=2, max_length=150)
+    email = serializers.EmailField(max_length=254)
+    password = serializers.CharField(write_only=True, min_length=12, max_length=128, trim_whitespace=False)
+    access_key = serializers.RegexField(r"^[A-Z2-9]{12}$", write_only=True)
+    turnstile_token = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=2048)
+    website = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=200)
+    terms_accepted = serializers.BooleanField(write_only=True, required=False, default=False)
+    privacy_accepted = serializers.BooleanField(write_only=True, required=False, default=False)
+
+    def validate(self, attrs):
+        validate_public_submission(attrs, self.context, "professional_registration")
+        self.legal_document_types = validate_legal_acceptance(attrs)
+        attrs["email"] = User.objects.normalize_email(attrs["email"]).lower()
+        attrs["full_name"] = " ".join(attrs["full_name"].split())
+        validate_password(attrs["password"], User(email=attrs["email"], full_name=attrs["full_name"]))
+        return attrs
+
+    def create(self, validated_data):
+        from django.utils import timezone
+        from professionals.models import ProfessionalAccessInvite
+
+        digest = ProfessionalAccessInvite.digest_secret(validated_data.pop("access_key"))
+        password = validated_data.pop("password")
+        validated_data.pop("turnstile_token", None)
+        validated_data.pop("website", None)
+        try:
+            # ASVS v5.0.0-2.3.3/2.3.4: lock makes invitation consumption atomic and single-use.
+            with transaction.atomic():
+                invite = ProfessionalAccessInvite.objects.select_for_update().select_related("professional", "company").filter(digest=digest).first()
+                if (
+                    not invite or invite.used_at or invite.revoked_at or invite.expires_at <= timezone.now()
+                    or invite.professional.user_id or User.objects.filter(email=validated_data["email"]).exists()
+                ):
+                    raise serializers.ValidationError({"access_key": "A chave ou os dados informados são inválidos."})
+                user = User.objects.create_user(password=password, **validated_data)
+                invite.professional.user = user
+                invite.professional.access_active = True
+                invite.professional.save(update_fields=("user", "access_active", "updated_at"))
+                invite.used_at = timezone.now()
+                invite.save(update_fields=("used_at", "updated_at"))
+                record_current_acceptances(
+                    self.legal_document_types,
+                    context=LegalAcceptance.Context.PROFESSIONAL_REGISTER,
+                    user=user,
+                    company=invite.company,
+                )
+                return user
+        except IntegrityError as exc:
+            raise serializers.ValidationError({"access_key": "A chave ou os dados informados são inválidos."}) from exc

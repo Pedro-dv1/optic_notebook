@@ -1,0 +1,23 @@
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useState, type FormEvent } from 'react'
+import { api, apiErrorMessage } from '../../api/client'
+import { useCompanyUnits } from '../../components/UnitFields'
+import { Button, Dialog, Field, LoadingState, Notice } from '../../components/ui'
+import type { CompanyUnit } from '../../types/api'
+
+export default function AdminUnitsPage() {
+  const units = useCompanyUnits()
+  const client = useQueryClient()
+  const [editing, setEditing] = useState<CompanyUnit | 'new' | null>(null)
+  const [removing, setRemoving] = useState<CompanyUnit | null>(null)
+  const refresh = () => { client.invalidateQueries({ queryKey: ['company-units'] }); client.invalidateQueries({ queryKey: ['company-profile'] }); client.invalidateQueries({ queryKey: ['company-shell'] }); client.invalidateQueries({ queryKey: ['public-company'] }) }
+  const save = useMutation({ mutationFn: ({ id, payload }: { id?: string; payload: object }) => id ? api.patch(`/company/units/${id}/`, payload) : api.post('/company/units/', payload), onSuccess: () => { refresh(); setEditing(null) } })
+  const remove = useMutation({ mutationFn: (id: string) => api.delete(`/company/units/${id}/`), onSuccess: () => { refresh(); setRemoving(null) } })
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const data = new FormData(event.currentTarget)
+    save.mutate({ id: editing && editing !== 'new' ? editing.id : undefined, payload: { name: data.get('name'), address: data.get('address'), city: data.get('city'), state: data.get('state'), is_active: data.get('is_active') === 'on', is_primary: data.get('is_primary') === 'on' } })
+  }
+  const current = editing && editing !== 'new' ? editing : null
+  return <div><header className="mb-6 flex flex-wrap items-center justify-between gap-4"><div><h1 className="page-title">Unidades</h1><p className="muted mt-2 text-sm">Endereços e locais de atendimento da empresa.</p></div><Button onClick={() => { save.reset(); setEditing('new') }}>Cadastrar unidade</Button></header>{units.isPending && <LoadingState />}{units.isError && <Notice>{apiErrorMessage(units.error)}</Notice>}<div className="grid gap-4 md:grid-cols-2">{units.data?.map((unit) => <article key={unit.id} className="panel"><h2 className="break-words text-lg font-semibold">{unit.name}</h2><p className="muted mt-2 break-words text-sm">{[unit.address, unit.city, unit.state].filter(Boolean).join(' · ') || 'Endereço não informado'}</p><p className="mt-2 text-sm">{unit.is_primary ? 'Principal · ' : ''}{unit.is_active ? 'Ativa' : 'Inativa'}</p><div className="mt-4 flex flex-wrap gap-2"><Button variant="secondary" aria-label={`Editar ${unit.name}`} onClick={() => { save.reset(); setEditing(unit) }}>Editar</Button><Button variant="danger" disabled={unit.is_primary} onClick={() => { remove.reset(); setRemoving(unit) }}>Excluir</Button></div></article>)}</div><Dialog open={Boolean(editing)} title={editing === 'new' ? 'Cadastrar unidade' : 'Editar unidade'} onClose={() => setEditing(null)}><form className="grid gap-4" onSubmit={submit}><Field label="Nome da unidade" name="name" required maxLength={120} defaultValue={current?.name || ''} /><Field label="Endereço" name="address" maxLength={300} defaultValue={current?.address || ''} /><div className="grid gap-3 sm:grid-cols-2"><Field label="Cidade" name="city" maxLength={100} defaultValue={current?.city || ''} /><Field label="Estado (UF)" name="state" maxLength={2} pattern="[A-Z]{2}" defaultValue={current?.state || ''} /></div><label className="flex min-h-11 items-center gap-2"><input type="checkbox" name="is_active" defaultChecked={current?.is_active ?? true} />Unidade ativa</label><label className="flex min-h-11 items-center gap-2"><input type="checkbox" name="is_primary" defaultChecked={current?.is_primary ?? false} />Unidade principal</label><p className="muted text-sm">A principal precisa permanecer ativa. Para trocar, marque outra unidade como principal. Cadastre os horários dos profissionais para cada local.</p>{save.isError && <Notice>{apiErrorMessage(save.error)}</Notice>}<Button loading={save.isPending}>Salvar unidade</Button></form></Dialog><Dialog open={Boolean(removing)} title="Excluir unidade" onClose={() => setRemoving(null)}><p className="muted">Excluir {removing?.name}? Unidades com horários ou agendamentos são preservadas; nesse caso, desative a unidade.</p>{remove.isError && <Notice>{apiErrorMessage(remove.error)}</Notice>}<Button className="mt-5" variant="danger" loading={remove.isPending} onClick={() => removing && remove.mutate(removing.id)}>Confirmar exclusão</Button></Dialog></div>
+}

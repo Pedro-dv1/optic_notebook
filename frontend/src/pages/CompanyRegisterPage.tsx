@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router'
 import { api, apiErrorMessage, apiFieldErrors } from '../api/client'
-import logoIcon from '../assets/branding/OpticNoteBook-logo-icon.png'
+import logoIcon from '../assets/branding/notesync-icon.png'
 import { CityAutocomplete } from '../components/CityAutocomplete'
 import { PublicBackLink, PublicPage } from '../components/PublicLayout'
 import { Honeypot, Turnstile } from '../components/Turnstile'
@@ -78,20 +78,20 @@ export default function CompanyRegisterPage() {
     }
   }
 
-  if (options.isPending) return <PublicPage mode="entrepreneur"><div className="mx-auto max-w-[58rem] px-5 pt-4"><PublicBackLink to="/empreendedor/login" /><LoadingState label="Carregando opções de cadastro" /></div></PublicPage>
-  if (options.isError) return <PublicPage mode="entrepreneur"><div className="mx-auto max-w-[58rem] px-5 pt-4"><PublicBackLink to="/empreendedor/login" /><div className="mx-auto max-w-xl pt-16"><Notice>{apiErrorMessage(options.error)}</Notice></div></div></PublicPage>
-  if (!isPublicPlatformConfig(options.data)) return <PublicPage mode="entrepreneur"><div className="mx-auto max-w-[58rem] px-5 pt-4"><PublicBackLink to="/empreendedor/login" /><div className="mx-auto max-w-xl py-16"><EmptyState title="Opções de cadastro indisponíveis" description="A configuração de cadastro veio vazia. Tente carregar novamente." /><div className="mt-5 flex justify-center"><Button variant="secondary" disabled={options.isFetching} onClick={() => void options.refetch()}>{options.isFetching ? 'Carregando…' : 'Tentar novamente'}</Button></div></div></div></PublicPage>
+  if (options.isPending) return <PublicPage mode="entrepreneur"><div className="mx-auto max-w-xl px-5 pt-4"><div className="public-form-card p-6"><PublicBackLink to="/empreendedor/login" /><LoadingState label="Carregando opções de cadastro" /></div></div></PublicPage>
+  if (options.isError) return <PublicPage mode="entrepreneur"><div className="mx-auto max-w-xl px-5 pt-4"><div className="public-form-card p-6"><PublicBackLink to="/empreendedor/login" /><Notice>{apiErrorMessage(options.error)}</Notice></div></div></PublicPage>
+  if (!isPublicPlatformConfig(options.data)) return <PublicPage mode="entrepreneur"><div className="mx-auto max-w-xl px-5 pt-4"><div className="public-form-card p-6"><PublicBackLink to="/empreendedor/login" /><EmptyState title="Opções de cadastro indisponíveis" description="A configuração de cadastro veio vazia. Tente carregar novamente." /><div className="mt-5 flex justify-center"><Button variant="secondary" disabled={options.isFetching} onClick={() => void options.refetch()}>{options.isFetching ? 'Carregando…' : 'Tentar novamente'}</Button></div></div></div></PublicPage>
   const companyOptions = options.data.company_options
   const allowedTypes = companyOptions.business_types_by_niche?.[niche]
   const businessTypes = allowedTypes ? companyOptions.business_types.filter((option) => allowedTypes.includes(option.value)) : companyOptions.business_types
 
   return <PublicPage mode="entrepreneur">
     <section className="mx-auto max-w-[56rem] px-5 pb-10 pt-5 sm:pt-7">
-      <PublicBackLink to="/empreendedor/login" />
       <div className="public-form-card px-5 py-6 sm:px-8 sm:py-7">
+        <PublicBackLink to="/empreendedor/login" />
         <img src={logoIcon} className="mx-auto size-12 object-contain" alt="" aria-hidden="true" />
         <p className="mt-3 text-center text-xs font-bold uppercase tracking-[.22em] text-[#087cf0]">Nova empresa</p>
-        <h1 className="public-display mt-2 text-center text-3xl sm:text-4xl">Cadastrar no <span>OpticNoteBook</span></h1>
+        <h1 className="public-display mt-2 text-center text-3xl sm:text-4xl">Cadastrar no <span>NoteSync</span></h1>
         <p className="mt-2 text-center text-sm text-[#7182b2] sm:text-base">A chave será enviada somente nesta solicitação e removida do formulário logo depois.</p>
         <form className="relative mt-6 grid gap-x-5 gap-y-3.5 sm:grid-cols-2" onSubmit={submit} noValidate>
           <Honeypot />

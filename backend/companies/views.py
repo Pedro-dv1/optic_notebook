@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, time, timedelta
 
 from django.db import transaction
-from django.db.models import Count, F, IntegerField, OuterRef, Q, Subquery, Sum, Value
+from django.db.models import Avg, Count, Exists, F, IntegerField, OuterRef, Q, Subquery, Sum, Value
 from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -13,17 +13,20 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_protect
-from rest_framework.viewsets import ReadOnlyModelViewSet
+from rest_framework.viewsets import ModelViewSet, ReadOnlyModelViewSet
 
-from platform_core.permissions import IsCompanyAdmin, IsSuperuser, company_for_user
+from platform_core.permissions import IsActiveCompanyAdmin, IsCompanyAdmin, IsSuperuser, company_for_user
 from platform_core.throttles import WindowScopedRateThrottle
 from platform_core.search import accent_insensitive_query, normalized_contains
 
-from bookings.models import Appointment
+from bookings.models import Appointment, Review
+from customers.models import CompanyFavorite
+from services.models import Service
 
-from .models import Company, CompanyDailyMetric, CompanyViewVisitor
+from .models import Company, CompanyDailyMetric, CompanyViewVisitor, CompanyUnit
 from .serializers import (
     CompanyViewSerializer,
+    CompanyUnitSerializer,
     CompanyBookingSettingsSerializer,
     CompanyRegistrationSerializer,
     CompanySerializer,
@@ -34,6 +37,43 @@ from .serializers import (
 )
 
 security_logger = logging.getLogger("optic_notebook.security")
+
+
+class CompanyUnitViewSet(ModelViewSet):
+    permission_classes = (IsActiveCompanyAdmin,)
+    serializer_class = CompanyUnitSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        # ASVS 8.2.2/8.4.1: every object lookup is scoped to the authenticated tenant.
+        return CompanyUnit.objects.filter(company=company_for_user(self.request.user))
+
+    def get_serializer_context(self):
+        return {**super().get_serializer_context(), "company": company_for_user(self.request.user)}
+
+    @transaction.atomic
+    def create(self, request, *args, **kwargs):
+        Company.objects.select_for_update(no_key=True).get(pk=company_for_user(request.user).pk)
+        return super().create(request, *args, **kwargs)
+
+    @transaction.atomic
+    def update(self, request, *args, **kwargs):
+        Company.objects.select_for_update(no_key=True).get(pk=company_for_user(request.user).pk)
+        return super().update(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        serializer.save(company=company_for_user(self.request.user))
+
+    @transaction.atomic
+    def destroy(self, request, *args, **kwargs):
+        from rest_framework.exceptions import ValidationError
+        Company.objects.select_for_update(no_key=True).get(pk=company_for_user(request.user).pk)
+        unit = self.get_object()
+        if unit.is_primary:
+            raise ValidationError("Escolha outra unidade principal antes de excluir esta unidade.")
+        if unit.appointments.exists() or unit.work_schedules.exists() or unit.services.exists() or unit.professionals.exists():
+            raise ValidationError("Esta unidade possui histórico, jornadas ou catálogo. Desative-a para preservar os dados.")
+        return super().destroy(request, *args, **kwargs)
 
 
 def _month_periods():
@@ -187,12 +227,11 @@ class PublicCompanyDetailView(generics.RetrieveAPIView):
     throttle_scope = "public_read"
 
     def get_queryset(self):
-        return Company.objects.all()
+        return Company.objects.prefetch_related("units")
 
 
 class PublicCompanySearchView(generics.ListAPIView):
     permission_classes = (AllowAny,)
-    authentication_classes = ()
     serializer_class = PublicCompanySearchSerializer
     pagination_class = PublicCompanyPagination
     throttle_classes = (WindowScopedRateThrottle,)
@@ -202,7 +241,20 @@ class PublicCompanySearchView(generics.ListAPIView):
         filters = PublicCompanySearchQuerySerializer(data=self.request.query_params)
         filters.is_valid(raise_exception=True)
         values = filters.validated_data
-        queryset = Company.objects.filter(status=Company.Status.ACTIVE)
+        ratings = Review.objects.filter(company_id=OuterRef("pk")).order_by().values("company_id").annotate(
+            average=Avg("rating"), total=Count("id"),
+        )
+        queryset = Company.objects.filter(status=Company.Status.ACTIVE).prefetch_related("units").annotate(
+            average_rating=Subquery(ratings.values("average")[:1]),
+            review_count=Coalesce(Subquery(ratings.values("total")[:1]), Value(0), output_field=IntegerField()),
+        )
+        catalog_units = Q(units__company_id=OuterRef("pk"), units__is_active=True)
+        # Service and location must match the same unit, not separate branches.
+        if state_filter := values.get("state"):
+            catalog_units &= Q(units__state=state_filter)
+        if city := values.get("city", "").strip():
+            catalog_units &= Q(units__city__unaccent__iexact=city)
+        catalog = Service.objects.filter(catalog_units, company_id=OuterRef("pk"), is_active=True)
         query = (values.get("search") or values.get("q") or "").strip()
         if query:
             matching_niches = [value for value, label in Company.Niche.choices if normalized_contains(query, label)]
@@ -213,19 +265,29 @@ class PublicCompanySearchView(generics.ListAPIView):
                 )
                 | Q(niche__in=matching_niches)
                 | Q(business_type__in=matching_types)
-                | Q(services__name__unaccent__icontains=query, services__is_active=True)
+                | Q(Exists(catalog.filter(name__unaccent__icontains=query)))
             )
+        location = Q(units__is_active=True)
         if state_filter := values.get("state"):
-            queryset = queryset.filter(state=state_filter)
+            location &= Q(units__state=state_filter)
         if city := values.get("city", "").strip():
-            queryset = queryset.filter(city__unaccent__iexact=city)
+            location &= Q(units__city__unaccent__iexact=city)
+        if values.get("state") or values.get("city", "").strip():
+            queryset = queryset.filter(location)
         if niche := values.get("niche"):
             queryset = queryset.filter(niche=niche)
         if business_type := values.get("business_type"):
             queryset = queryset.filter(business_type=business_type)
         if service := values.get("service", "").strip():
-            queryset = queryset.filter(services__name__unaccent__icontains=service, services__is_active=True)
-        return queryset.distinct().order_by(values["ordering"], "slug")
+            queryset = queryset.filter(Exists(catalog.filter(name__unaccent__icontains=service)))
+        ordering = values["ordering"]
+        if ordering == "recommended":
+            user = self.request.user
+            if user.is_authenticated and not user.is_superuser and not hasattr(user, "owned_company") and not hasattr(user, "professional_profile"):
+                queryset = queryset.annotate(is_favorite=Exists(CompanyFavorite.objects.filter(customer=user, company_id=OuterRef("pk"))))
+                return queryset.distinct().order_by("-is_favorite", "name", "slug")
+            ordering = "name"
+        return queryset.distinct().order_by(ordering, "slug")
 
 
 class PublicCompanyViewEventView(generics.GenericAPIView):

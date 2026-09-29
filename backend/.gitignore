@@ -15,6 +15,7 @@ logs/
 *.sqlite3-journal
 staticfiles/
 media/
+private_feedback/
 .idea/
 .vscode/
 *.swp

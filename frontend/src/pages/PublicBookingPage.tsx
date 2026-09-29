@@ -9,10 +9,15 @@ import { PublicFooter } from '../components/Footer'
 import { PublicHeader } from '../components/PublicLayout'
 import { StatusBadge } from '../components/StatusBadge'
 import { Turnstile } from '../components/Turnstile'
-import { Button, EmptyState, Field, LoadingState, Notice, TextAreaField, validateForm } from '../components/ui'
-import { durationMinutes, formatDateTime, formatMoney, formatTime, localDateInput } from '../lib/format'
+import { Button, EmptyState, Field, LoadingState, Notice, SelectField, TextAreaField, validateForm } from '../components/ui'
+import { durationMinutes, formatDateTime, formatMoney } from '../lib/format'
 import { safeImageUrl } from '../lib/media'
+import { BookingReminders } from '../components/BookingReminders'
+import { CustomerMobileNavigation } from '../components/CustomerMobileNavigation'
 import type { Appointment, AvailabilitySlot, Company, Professional, Service } from '../types/api'
+import { BookingDatePicker } from '../components/BookingDatePicker'
+import { TimeSlots } from '../components/TimeSlots'
+import { FavoriteButton } from '../components/FavoriteButton'
 import NotFoundPage from './NotFoundPage'
 
 type Step = 'service' | 'professional' | 'time' | 'details' | 'review' | 'confirmed'
@@ -21,9 +26,9 @@ const stepLabels = ['Serviço', 'Profissional', 'Data e horário', 'Seus dados',
 let inMemoryVisitorId: string | null = null
 
 export default function PublicBookingPage() {
-  const [minimumDate] = useState(() => localDateInput())
   const { slug = '' } = useParams()
   const { user, status } = useAuth()
+  const [chosenUnit, setChosenUnit] = useState('')
   const [step, setStep] = useState<Step>('service')
   const [service, setService] = useState<Service | null>(null)
   const [professional, setProfessional] = useState<Professional | null>(null)
@@ -37,9 +42,14 @@ export default function PublicBookingPage() {
   const [rescheduling, setRescheduling] = useState(false)
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const company = useQuery({ queryKey: ['public-company', slug], queryFn: () => api.get<Company>(`/public/companies/${encodeURIComponent(slug)}/`), retry: false })
-  const services = useQuery({ queryKey: ['public-services', slug], queryFn: () => api.get<Service[]>(`/public/companies/${encodeURIComponent(slug)}/services/`), enabled: company.data?.status === 'ACTIVE' })
-  const professionals = useQuery({ queryKey: ['public-professionals', slug, service?.id], queryFn: () => api.get<Professional[]>(`/public/companies/${encodeURIComponent(slug)}/professionals/?service=${service?.id}`), enabled: Boolean(service) })
-  const availability = useQuery({ queryKey: ['availability', slug, service?.id, professional?.id, date], queryFn: () => api.get<AvailabilitySlot[]>(`/public/companies/${encodeURIComponent(slug)}/availability/?service=${service?.id}&professional=${professional?.id}&date=${date}`), enabled: Boolean(service && professional && date), staleTime: 15_000 })
+  const units = company.data?.units?.filter((unit) => unit.is_active) || []
+  const unitId = units.length === 1 ? units[0].id : chosenUnit
+  const unit = units.find((unit) => unit.id === unitId)
+  const unitQuery = unitId ? `&unit=${encodeURIComponent(unitId)}` : ''
+  const hasUnit = units.length < 2 || Boolean(unitId)
+  const services = useQuery({ queryKey: ['public-services', slug, unitId], queryFn: ({ signal }) => api.get<Service[]>(`/public/companies/${encodeURIComponent(slug)}/services/${unitId ? `?unit=${unitId}` : ''}`, { signal }), enabled: company.data?.status === 'ACTIVE' && hasUnit })
+  const professionals = useQuery({ queryKey: ['public-professionals', slug, service?.id, unitId], queryFn: ({ signal }) => api.get<Professional[]>(`/public/companies/${encodeURIComponent(slug)}/professionals/?service=${service?.id}${unitQuery}`, { signal }), enabled: Boolean(service) })
+  const availability = useQuery({ queryKey: ['availability', slug, service?.id, professional?.id, unitId, date], queryFn: ({ signal }) => api.get<AvailabilitySlot[]>(`/public/companies/${encodeURIComponent(slug)}/availability/?service=${service?.id}&professional=${professional?.id}&date=${date}${unitQuery}`, { signal }), enabled: Boolean(service && professional && date), staleTime: 15_000 })
   const { mutate: recordView } = useMutation({ mutationFn: (visitorId: string) => api.post(`/public/companies/${encodeURIComponent(slug)}/view/`, { visitor_id: visitorId }), retry: false })
 
   useEffect(() => {
@@ -53,6 +63,7 @@ export default function PublicBookingPage() {
     mutationFn: () => rescheduling
       ? api.post<Appointment>(`/public/companies/${encodeURIComponent(slug)}/appointments/reschedule/`, { management_token: managementToken, starts_at: startsAt })
       : api.post<Appointment & { management_token?: string }>(`/public/companies/${encodeURIComponent(slug)}/appointments/`, {
+        unit: unitId || undefined,
         service: service?.id,
         professional: professional?.id,
         starts_at: startsAt,
@@ -83,11 +94,11 @@ export default function PublicBookingPage() {
   if (company.isError && company.error instanceof ApiError && company.error.status === 404) return <NotFoundPage />
   if (company.isError) return <BookingFrame><CenteredNotice error={company.error} /></BookingFrame>
   const brand = company.data
-  if (brand.status === 'SUSPENDED') return <BookingFrame><div className="mx-auto max-w-xl px-5 py-20 text-center"><h1 className="text-2xl font-bold">Página temporariamente indisponível</h1><p className="mt-3 text-[#7182b2]">No momento, esta empresa não está recebendo novos agendamentos.</p><Link to="/cliente/procurar" className="btn btn-secondary mt-7">Encontrar outra empresa</Link></div></BookingFrame>
+  if (brand.status === 'SUSPENDED') return <BookingFrame><div className="mx-auto max-w-xl px-5 py-20 text-center"><h1 className="text-2xl font-bold">Página temporariamente indisponível</h1><p className="mt-3 text-[#52658a]">No momento, esta empresa não está recebendo novos agendamentos.</p><Link to="/cliente/procurar" className="btn btn-secondary mt-7">Encontrar outra empresa</Link></div></BookingFrame>
 
   const logo = safeImageUrl(brand.logo)
   const category = [brand.business_type_label, brand.niche_label].filter(Boolean).join(' · ')
-  const location = [brand.address, [brand.city, brand.state].filter(Boolean).join(' - ')].filter(Boolean).join(' · ')
+  const location = [unit?.address ?? brand.address, [unit?.city ?? brand.city, unit?.state ?? brand.state].filter(Boolean).join(' - ')].filter(Boolean).join(' · ')
   const currentStep = stepKeys.indexOf(step)
   const backMap: Partial<Record<Step, Step>> = { professional: 'service', time: 'professional', details: 'time', review: 'details' }
   const nextFromDetails = (event: FormEvent<HTMLFormElement>) => {
@@ -103,27 +114,30 @@ export default function PublicBookingPage() {
 
   return <BookingFrame>
     <div className="mx-auto max-w-[78rem] px-4 pb-10 pt-6 sm:px-6 lg:px-8">
-      <div className="mb-6 text-center sm:mb-8"><h1 className="public-display text-3xl sm:text-4xl">Agende seu <span>horário</span></h1><p className="mt-2 text-sm text-[#7182b2] sm:text-base">Escolha o serviço, selecione um horário e confirme seus dados.</p></div>
+      <div className="mb-6 text-center sm:mb-8"><h1 className="public-display text-3xl sm:text-4xl">Agende seu <span>horário</span></h1><p className="mt-2 text-sm text-[#52658a] sm:text-base">Escolha o serviço, selecione um horário e confirme seus dados.</p></div>
       <div className="grid gap-5 lg:grid-cols-[17.5rem_minmax(0,1fr)] lg:items-start">
         <aside className="rounded-2xl border border-[#d5e4f5] bg-white p-4 lg:sticky lg:top-28 lg:p-5">
           <div className="relative flex items-center gap-3 lg:block">
-            <div className="absolute right-0 top-0"><CompanyObservationPopover companyName={brand.name} notes={brand.public_notes} /></div>
+
             {logo ? <img src={logo} alt={`Imagem de ${brand.name}`} className="size-16 shrink-0 rounded-xl object-cover lg:h-32 lg:w-full" /> : <div className="grid size-16 shrink-0 place-items-center rounded-xl bg-[#eef5ff] text-[#087cf0] lg:h-28 lg:w-full"><Building2 className="size-8" aria-hidden="true" /></div>}
-            <div className="min-w-0 pr-10 lg:mt-4 lg:pr-0"><h2 className="truncate text-lg font-bold">{brand.name}</h2>{category && <p className="mt-1 truncate text-sm font-medium text-[#087cf0]">{category}</p>}{location && <p className="mt-2 hidden gap-2 text-sm leading-5 text-[#7182b2] lg:flex"><MapPin className="mt-0.5 size-4 shrink-0" />{location}</p>}</div>
+            <div className="min-w-0 flex-1 lg:mt-4"><div className="flex items-center gap-1"><h2 className="min-w-0 flex-1 text-lg font-bold">{brand.name}</h2><div className="flex shrink-0">{brand.id && <FavoriteButton companyId={brand.id} companyName={brand.name} />}<CompanyObservationPopover companyName={brand.name} notes={brand.public_notes} /></div></div>{category && <p className="mt-1 truncate text-sm font-medium text-[#087cf0]">{category}</p>}{location && <p className="mt-2 hidden gap-2 text-sm leading-5 text-[#52658a] lg:flex"><MapPin className="mt-0.5 size-4 shrink-0" />{location}</p>}</div>
           </div>
+          {units.length > 1 && <div className="mt-5"><SelectField label="Unidade de atendimento" value={unitId} disabled={step === 'confirmed' || rescheduling} onChange={(event) => { setChosenUnit(event.target.value); setService(null); setProfessional(null); setDate(''); setStartsAt(''); setStep('service') }}><option value="">Selecione a unidade</option>{units.map((item) => <option key={item.id} value={item.id}>{item.name} · {item.city} {item.state}</option>)}</SelectField>{unit && <p className="mt-2 text-sm text-[#43557e]">{unit.address}</p>}</div>}
+          {units.length === 1 && <p className="mt-4 text-sm text-[#43557e]">Atendimento na unidade {units[0].name}</p>}
           <BookingStepper current={currentStep} />
         </aside>
         <section className="min-w-0 rounded-2xl border border-[#d5e4f5] bg-white p-4 sm:p-6 lg:p-7">
           {step !== 'service' && step !== 'confirmed' && <button className="btn btn-ghost mb-5 !px-2" onClick={() => setStep(backMap[step] || 'service')}><ArrowLeft className="size-4" /> Voltar</button>}
-          {step === 'service' && <StepSection title="Qual serviço você deseja?" description="Selecione o serviço que melhor atende às suas necessidades.">
+          {!hasUnit && <p role="status" className="text-sm text-[#43557e]">Escolha a unidade de atendimento para ver serviços e horários.</p>}
+          {step === 'service' && hasUnit && <StepSection title="Qual serviço você deseja?" description="Selecione o serviço que melhor atende às suas necessidades.">
             {services.isPending && <LoadingState />}{services.isError && <Notice>{apiErrorMessage(services.error)}</Notice>}{services.data?.length === 0 && <EmptyState title="Nenhum serviço disponível" description="Esta empresa ainda não publicou serviços para agendamento." />}
-            {services.data && <div className="grid gap-3 sm:grid-cols-2">{services.data.map((item) => <article key={item.id} className="flex min-h-48 flex-col rounded-xl border border-[#d8e5f4] p-4"><div className="flex items-start gap-3"><span className="grid size-12 shrink-0 place-items-center rounded-full bg-[#edf5ff] text-[#087cf0]"><Scissors className="size-5" aria-hidden="true" /></span><div className="min-w-0"><h3 className="font-bold">{item.name}</h3>{item.description && <p className="mt-1 line-clamp-3 text-sm leading-5 text-[#7182b2]">{item.description}</p>}</div></div><div className="mt-auto flex flex-wrap gap-x-5 gap-y-2 pt-4 text-sm text-[#52658f]"><span className="inline-flex items-center gap-1.5"><Clock3 className="size-4" />{durationMinutes(item.duration)} min</span>{item.price !== null && <span className="inline-flex items-center gap-1.5"><Tag className="size-4" />{formatMoney(item.price)}</span>}</div><Button className="mt-4 w-full" aria-label={`Selecionar ${item.name}`} onClick={() => { setService(item); setProfessional(null); setStep('professional') }}>Selecionar</Button></article>)}</div>}
+            {services.data && <div className="grid gap-3 sm:grid-cols-2">{services.data.map((item) => <article key={item.id} className="flex min-h-48 flex-col rounded-xl border border-[#d8e5f4] p-4"><div className="flex items-start gap-3"><span className="grid size-12 shrink-0 place-items-center rounded-full bg-[#edf5ff] text-[#087cf0]"><Scissors className="size-5" aria-hidden="true" /></span><div className="min-w-0"><h3 className="font-bold">{item.name}</h3>{item.description && <p className="mt-1 line-clamp-3 text-sm leading-5 text-[#52658a]">{item.description}</p>}</div></div><div className="mt-auto flex flex-wrap gap-x-5 gap-y-2 pt-4 text-sm text-[#52658f]"><span className="inline-flex items-center gap-1.5"><Clock3 className="size-4" />{durationMinutes(item.duration)} min</span>{item.price !== null && <span className="inline-flex items-center gap-1.5"><Tag className="size-4" />{formatMoney(item.price)}</span>}</div><Button className="mt-4 w-full" aria-label={`Selecionar ${item.name}`} onClick={() => { setService(item); setProfessional(null); setStep('professional') }}>Selecionar</Button></article>)}</div>}
           </StepSection>}
-          {step === 'professional' && <StepSection title="Escolha o profissional" description="Mostramos somente profissionais disponíveis para o serviço selecionado.">{professionals.isPending && <LoadingState />}{professionals.isError && <Notice>{apiErrorMessage(professionals.error)}</Notice>}{professionals.data?.length === 0 && <EmptyState title="Nenhum profissional disponível" description="Não há profissionais ativos para este serviço." />}{professionals.data && <div className="grid gap-3 sm:grid-cols-2">{professionals.data.map((item) => <button key={item.id} className="flex min-h-16 items-center justify-between gap-3 rounded-xl border border-[#d8e5f4] p-4 text-left hover:border-[#7bb7ef]" onClick={() => { setProfessional(item); setStep('time') }}><span className="inline-flex min-w-0 items-center gap-3"><span className="grid size-11 shrink-0 place-items-center rounded-full bg-[#edf5ff] text-[#087cf0]"><UserRound className="size-5" /></span><span className="truncate font-semibold">{item.name}</span></span><ArrowRight className="size-4 shrink-0 text-[#7182b2]" /></button>)}</div>}</StepSection>}
-          {step === 'time' && <StepSection title="Escolha a data e o horário" description="Os horários abaixo refletem a disponibilidade real da empresa."><div className="max-w-sm"><Field label="Data" type="date" min={minimumDate} value={date} onChange={(event) => { setDate(event.target.value); setStartsAt('') }} /></div>{availability.isFetching && <LoadingState label="Consultando disponibilidade" />}{availability.isError && <div className="mt-4"><Notice>{apiErrorMessage(availability.error)}</Notice></div>}{availability.data?.length === 0 && <div className="mt-5"><EmptyState title="Sem horários nesta data" description="Escolha outro dia para continuar." /></div>}{availability.data && availability.data.length > 0 && <div className="mt-5 grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5">{availability.data.map((item) => <button key={item.starts_at} className={`btn !px-2 ${startsAt === item.starts_at ? 'btn-primary ring-2 ring-[#071044] ring-offset-2' : 'btn-secondary'}`} aria-pressed={startsAt === item.starts_at} onClick={() => setStartsAt(item.starts_at)}>{formatTime(item.starts_at)}</button>)}</div>}<div className="mt-6 flex justify-end"><Button disabled={!startsAt || create.isPending} onClick={() => rescheduling ? create.mutate() : setStep('details')}>{rescheduling ? 'Confirmar novo horário' : 'Continuar'}</Button></div>{create.isError && <div className="mt-4"><Notice>{apiErrorMessage(create.error)}</Notice></div>}</StepSection>}
+          {step === 'professional' && <StepSection title="Escolha o profissional" description="Mostramos somente profissionais disponíveis para o serviço selecionado.">{professionals.isPending && <LoadingState />}{professionals.isError && <Notice>{apiErrorMessage(professionals.error)}</Notice>}{professionals.data?.length === 0 && <EmptyState title="Nenhum profissional disponível" description="Não há profissionais ativos para este serviço." />}{professionals.data && <div className="grid gap-3 sm:grid-cols-2">{professionals.data.map((item) => <button key={item.id} className="flex min-h-16 items-center justify-between gap-3 rounded-xl border border-[#d8e5f4] p-4 text-left hover:border-[#7bb7ef]" onClick={() => { setProfessional(item); setStep('time') }}><span className="inline-flex min-w-0 items-center gap-3"><span className="grid size-11 shrink-0 place-items-center rounded-full bg-[#edf5ff] text-[#087cf0]"><UserRound className="size-5" /></span><span className="truncate font-semibold">{item.name}</span></span><ArrowRight className="size-4 shrink-0 text-[#52658a]" /></button>)}</div>}</StepSection>}
+          {step === 'time' && <StepSection title="Escolha a data e o horário" description="Os horários abaixo refletem a disponibilidade real da empresa."><BookingDatePicker slug={slug} service={service?.id || ''} professional={professional?.id || ''} unit={unitId} value={date} onChange={(value) => { setDate(value); setStartsAt('') }} />{availability.isFetching && <LoadingState label="Consultando disponibilidade" />}{availability.isError && <div className="mt-4"><Notice>{apiErrorMessage(availability.error)}</Notice></div>}{availability.data?.length === 0 && <div className="mt-5"><EmptyState title="Sem horários nesta data" description="Escolha outro dia para continuar." /></div>}{availability.data && <TimeSlots key={date} slots={availability.data} value={startsAt} onChange={setStartsAt} />}<div className="mt-6 flex justify-end"><Button disabled={!startsAt || create.isPending} onClick={() => rescheduling ? create.mutate() : setStep('details')}>{rescheduling ? 'Confirmar novo horário' : 'Continuar'}</Button></div>{create.isError && <div className="mt-4"><Notice>{apiErrorMessage(create.error)}</Notice></div>}</StepSection>}
           {step === 'details' && <StepSection title="Seus dados" description="Confira como a empresa poderá identificar e contatar você.">{status === 'authenticated' && user && <div className="rounded-xl border border-[#d8e5f4] p-4"><p className="font-semibold">Usar meus dados salvos</p><div className="mt-2 text-sm leading-6 text-[#52658f]">{user.full_name}<br />{user.email}<br />{user.whatsapp}</div><div className="mt-3 grid gap-1"><label className="flex min-h-11 cursor-pointer items-center gap-2"><input type="radio" name="saved-data" checked={useSaved} onChange={() => setUseSaved(true)} /> Usar estes dados</label><label className="flex min-h-11 cursor-pointer items-center gap-2"><input type="radio" name="saved-data" checked={!useSaved} onChange={() => setUseSaved(false)} /> Alterar apenas neste agendamento</label></div></div>}<form className="mt-5 grid gap-4" onSubmit={nextFromDetails} noValidate>{(!user || !useSaved) && <><Field label="Nome" name="name" defaultValue={user?.full_name || snapshot.name} required error={fieldErrors.name} /><Field label="E-mail" name="email" type="email" defaultValue={user?.email || snapshot.email} required error={fieldErrors.email} /><Field label="WhatsApp" name="whatsapp" type="tel" defaultValue={user?.whatsapp || snapshot.whatsapp} required error={fieldErrors.whatsapp} /></>}<TextAreaField label="Observação (opcional)" name="notes" defaultValue={snapshot.notes} maxLength={2000} />{!user && <Turnstile action="anonymous_booking" onToken={setTurnstile} />}{Object.keys(fieldErrors).length > 0 && <Notice kind="validation">Preencha os campos obrigatórios.</Notice>}<Button className="w-full sm:ml-auto sm:w-auto" type="submit">Revisar agendamento</Button></form></StepSection>}
-          {step === 'review' && <StepSection title="Revise antes de confirmar" description="Verifique os dados antes de enviar o agendamento."><dl className="divide-y divide-[#e1eaf5] rounded-xl border border-[#d8e5f4] px-4">{[['Empresa', brand.name], ['Serviço', service?.name], ['Profissional', professional?.name], ['Data e horário', startsAt ? formatDateTime(startsAt) : ''], ['Cliente', user && useSaved ? user.full_name : snapshot.name]].map(([label, value]) => <div key={label} className="grid gap-1 py-3 text-sm sm:grid-cols-[8rem_1fr]"><dt className="text-[#7182b2]">{label}</dt><dd className="font-medium text-[#172653]">{value}</dd></div>)}</dl>{!user && <p className="mt-5 text-sm leading-6 text-[#52658f]">Ao continuar, seus dados serão coletados para realizar e administrar este agendamento. Saiba mais na <Link className="font-semibold text-[#087cf0] underline-offset-2 hover:underline" to="/politica-de-privacidade">Política de Privacidade</Link> e nos <Link className="font-semibold text-[#087cf0] underline-offset-2 hover:underline" to="/termos-de-uso">Termos de Uso</Link>.</p>}{create.isError && <div className="mt-4"><Notice>{apiErrorMessage(create.error)}</Notice></div>}<Button className="mt-6 w-full sm:ml-auto sm:w-auto" disabled={create.isPending} onClick={() => create.mutate()}>{create.isPending ? 'Confirmando…' : 'Confirmar agendamento'}</Button></StepSection>}
-          {step === 'confirmed' && confirmation && <div className="py-2"><div className="grid size-12 place-items-center rounded-full bg-[#e7f7ee] text-[#16804b]"><Check className="size-6" /></div><h2 className="mt-5 text-2xl font-bold">Agendamento recebido</h2><p className="mt-2 max-w-2xl text-sm leading-6 text-[#7182b2]">A empresa recebeu sua solicitação. Você pode acompanhar o status e gerenciar este horário enquanto o prazo permitir.</p><dl className="mt-6 grid gap-3 rounded-xl border border-[#d8e5f4] p-4 text-sm"><SummaryRow label="Status"><StatusBadge status={confirmation.status} /></SummaryRow><SummaryRow label="Empresa">{confirmation.company_name}</SummaryRow><SummaryRow label="Serviço">{confirmation.service_name}</SummaryRow><SummaryRow label="Profissional">{confirmation.professional_name}</SummaryRow><SummaryRow label="Quando">{formatDateTime(confirmation.starts_at)}</SummaryRow></dl>{cancel.isError && <div className="mt-4"><Notice>{apiErrorMessage(cancel.error)}</Notice></div>}{(confirmation.can_cancel || confirmation.can_reschedule) && <div className="mt-6 flex flex-wrap gap-3">{confirmation.can_reschedule && <Button variant="secondary" onClick={beginReschedule}>Reagendar</Button>}{confirmation.can_cancel && <Button variant="danger" disabled={cancel.isPending} onClick={() => cancel.mutate()}>{cancel.isPending ? 'Cancelando…' : 'Cancelar agendamento'}</Button>}</div>}{user && <Link className="btn btn-secondary mt-3" to="/cliente"><CalendarDays className="size-4" /> Meus agendamentos</Link>}</div>}
+          {step === 'review' && <StepSection title="Revise antes de confirmar" description="Verifique os dados antes de enviar o agendamento."><dl className="divide-y divide-[#e1eaf5] rounded-xl border border-[#d8e5f4] px-4">{[['Empresa', brand.name], ...(unit ? [['Unidade', `${unit.name} · ${unit.address}`]] : []), ['Serviço', service?.name], ['Profissional', professional?.name], ['Data e horário', startsAt ? formatDateTime(startsAt) : ''], ['Cliente', user && useSaved ? user.full_name : snapshot.name]].map(([label, value]) => <div key={label} className="grid gap-1 py-3 text-sm sm:grid-cols-[8rem_1fr]"><dt className="text-[#52658a]">{label}</dt><dd className="font-medium text-[#172653]">{value}</dd></div>)}</dl>{!user && <p className="mt-5 text-sm leading-6 text-[#52658f]">Ao continuar, seus dados serão coletados para realizar e administrar este agendamento. Saiba mais na <Link className="font-semibold text-[#087cf0] underline-offset-2 hover:underline" to="/politica-de-privacidade">Política de Privacidade</Link> e nos <Link className="font-semibold text-[#087cf0] underline-offset-2 hover:underline" to="/termos-de-uso">Termos de Uso</Link>.</p>}{create.isError && <div className="mt-4"><Notice>{apiErrorMessage(create.error)}</Notice></div>}<Button className="mt-6 w-full sm:ml-auto sm:w-auto" disabled={create.isPending} onClick={() => create.mutate()}>{create.isPending ? 'Confirmando…' : 'Confirmar agendamento'}</Button></StepSection>}
+          {step === 'confirmed' && confirmation && <div className="py-2"><div className="grid size-12 place-items-center rounded-full bg-[#e7f7ee] text-[#16804b]"><Check className="size-6" /></div><h2 className="mt-5 text-2xl font-bold">Agendamento recebido</h2><p className="mt-2 max-w-2xl text-sm leading-6 text-[#52658a]">A empresa recebeu sua solicitação. Você pode acompanhar o status e gerenciar este horário enquanto o prazo permitir.</p><dl className="mt-6 grid gap-3 rounded-xl border border-[#d8e5f4] p-4 text-sm"><SummaryRow label="Status"><StatusBadge status={confirmation.status} outcome={confirmation.outcome} /></SummaryRow><SummaryRow label="Empresa">{confirmation.company_name}</SummaryRow>{confirmation.unit_name && <SummaryRow label="Unidade">{confirmation.unit_name} · {confirmation.unit_address}</SummaryRow>}<SummaryRow label="Serviço">{confirmation.service_name}</SummaryRow><SummaryRow label="Profissional">{confirmation.professional_name}</SummaryRow><SummaryRow label="Quando">{formatDateTime(confirmation.starts_at)}</SummaryRow></dl><BookingReminders key={confirmation.id} appointment={confirmation.id} managementToken={managementToken} />{cancel.isError && <div className="mt-4"><Notice>{apiErrorMessage(cancel.error)}</Notice></div>}{(confirmation.can_cancel || confirmation.can_reschedule) && <div className="mt-6 flex flex-wrap gap-3">{confirmation.can_reschedule && <Button variant="secondary" onClick={beginReschedule}>Reagendar</Button>}{confirmation.can_cancel && <Button variant="danger" disabled={cancel.isPending} onClick={() => cancel.mutate()}>{cancel.isPending ? 'Cancelando…' : 'Cancelar agendamento'}</Button>}</div>}{user && <Link className="btn btn-secondary mt-3" to="/cliente"><CalendarDays className="size-4" /> Meus agendamentos</Link>}</div>}
         </section>
       </div>
     </div>
@@ -131,7 +145,7 @@ export default function PublicBookingPage() {
 }
 
 function BookingFrame({ children }: { children: ReactNode }) {
-  return <div className="booking-theme flex min-h-screen flex-col overflow-x-hidden"><PublicHeader mode="customer" /><main className="flex-1">{children}</main><PublicFooter /></div>
+  return <div className="booking-theme customer-mobile-layout flex min-h-screen flex-col overflow-x-hidden"><PublicHeader mode="customer" /><main className="flex-1">{children}</main><PublicFooter /><CustomerMobileNavigation /></div>
 }
 
 function BookingStepper({ current }: { current: number }) {
@@ -139,11 +153,11 @@ function BookingStepper({ current }: { current: number }) {
 }
 
 function StepSection({ title, description, children }: { title: string; description: string; children: ReactNode }) {
-  return <><header className="mb-5"><h2 className="text-xl font-bold tracking-[-.025em] sm:text-2xl">{title}</h2><p className="mt-1 text-sm leading-6 text-[#7182b2]">{description}</p></header>{children}</>
+  return <><header className="mb-5"><h2 className="text-xl font-bold tracking-[-.025em] sm:text-2xl">{title}</h2><p className="mt-1 text-sm leading-6 text-[#52658a]">{description}</p></header>{children}</>
 }
 
 function SummaryRow({ label, children }: { label: string; children: ReactNode }) {
-  return <div className="flex items-start justify-between gap-4"><dt className="text-[#7182b2]">{label}</dt><dd className="text-right font-medium text-[#172653]">{children}</dd></div>
+  return <div className="flex items-start justify-between gap-4"><dt className="text-[#52658a]">{label}</dt><dd className="text-right font-medium text-[#172653]">{children}</dd></div>
 }
 
 function CenteredNotice({ error }: { error: unknown }) {
@@ -151,10 +165,14 @@ function CenteredNotice({ error }: { error: unknown }) {
 }
 
 function visitorIdentifier() {
-  const storageKey = 'obn_anonymous_visitor'
+  const storageKey = 'notesync_anonymous_visitor'
   try {
-    const stored = window.localStorage.getItem(storageKey)
-    if (stored && /^[A-Za-z0-9_-]{20,64}$/.test(stored)) return stored
+    const stored = window.localStorage.getItem(storageKey) || window.localStorage.getItem('obn_anonymous_visitor')
+    if (stored && /^[A-Za-z0-9_-]{20,64}$/.test(stored)) {
+      window.localStorage.setItem(storageKey, stored)
+      window.localStorage.removeItem('obn_anonymous_visitor')
+      return stored
+    }
     const created = window.crypto.randomUUID()
     window.localStorage.setItem(storageKey, created)
     return created
